@@ -1,7 +1,7 @@
 /**
  * 空品觀測台 — CORS proxy（Cloudflare Worker）
  *
- * 只有在瀏覽器擋下對 sta.colife.org.tw 的跨來源請求時才需要部署這個。
+ * 只有在瀏覽器擋下對 sta.colife.org.tw / sta.ci.taiwan.gov.tw 的跨來源請求時才需要部署這個。
  * 部署後把 Worker 網址（結尾要有 ?url=）填進網站的「CORS proxy 前綴」欄位：
  *
  *   https://你的名稱.你的帳號.workers.dev/?url=
@@ -14,8 +14,9 @@
  */
 
 const ALLOWED_HOSTS = [
-  "sta.colife.org.tw",
-  "history.colife.org.tw"
+  "sta.colife.org.tw",        // 智慧城鄉空品微型感測器
+  "sta.ci.taiwan.gov.tw",     // 國家空品測站（STA_AirQuality_v2）與其他民生公共物聯網資料集
+  "history.colife.org.tw"     // 批次歷史資料
 ];
 
 const CORS = {

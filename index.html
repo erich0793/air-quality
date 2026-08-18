@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>空品測站連續觀測台</title>
-<meta name="description" content="輸入空氣網裝置編號，直接抓取智慧城鄉空品微型感測器的 3 分鐘解析度連續觀測資料。">
+<meta name="description" content="輸入空氣網裝置編號或國家空品測站名稱，同時取回智慧城鄉空品微型感測器（3 分鐘）與環境部國家空品測站（每小時）的原始觀測值並疊圖比較。">
 <style>
   :root{
     --paper:#F1F4F3; --panel:#FFFFFF;
@@ -24,7 +24,7 @@
   .masthead{border-bottom:1.5px solid var(--ink);padding-bottom:14px;margin-bottom:20px}
   .eyebrow{font-family:var(--mono);font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--muted);margin:0 0 6px}
   h1{font-size:clamp(22px,3.4vw,31px);line-height:1.2;margin:0 0 6px;font-weight:700;letter-spacing:-.01em}
-  .standfirst{margin:0;color:var(--ink-2);max-width:64ch;font-size:14.5px}
+  .standfirst{margin:0;color:var(--ink-2);max-width:66ch;font-size:14.5px}
 
   .grid{display:grid;grid-template-columns:326px 1fr;gap:22px;align-items:start}
   @media (max-width:900px){.grid{grid-template-columns:1fr}}
@@ -34,7 +34,7 @@
   .panel.primary{border-color:var(--accent);border-width:1.5px}
   .panel-title{font-family:var(--mono);font-size:11px;letter-spacing:.13em;text-transform:uppercase;color:var(--muted);margin:0 0 12px;display:flex;justify-content:space-between;align-items:baseline;gap:8px}
   .panel.primary .panel-title{color:var(--accent)}
-  .panel-title .count{color:var(--accent);font-weight:600;letter-spacing:.04em}
+  .panel-title .count{color:var(--accent);font-weight:600;letter-spacing:.04em;text-transform:none}
 
   label.field{display:block;margin-bottom:11px}
   label.field > span{display:block;font-size:12px;color:var(--ink-2);margin-bottom:4px;font-weight:500}
@@ -43,7 +43,7 @@
     border:1px solid var(--rule-strong);border-radius:2px;background:#fff;color:var(--ink)
   }
   #deviceInput{font-size:14px;letter-spacing:.03em}
-  input:focus,select:focus,button:focus-visible,summary:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+  input:focus,select:focus,button:focus-visible,summary:focus-visible,.chip:focus-within{outline:2px solid var(--accent);outline-offset:1px}
   .row2{display:grid;grid-template-columns:1fr 1fr;gap:8px}
 
   button{font-family:var(--sans);font-size:13.5px;font-weight:600;cursor:pointer;border:1px solid var(--accent);background:var(--accent);color:#fff;padding:8px 14px;border-radius:2px}
@@ -54,6 +54,14 @@
   .btn-row{display:flex;gap:8px;flex-wrap:wrap;margin-top:4px}
   .hint{font-size:11.5px;color:var(--muted);margin:6px 0 0;line-height:1.55}
   .hint code{font-family:var(--mono);background:#E8EDEB;padding:1px 4px;border-radius:2px}
+  .hint strong{color:var(--ink-2)}
+
+  .tabs{display:grid;grid-template-columns:1fr 1fr;gap:0;margin-bottom:12px;border:1px solid var(--rule-strong);border-radius:2px;overflow:hidden}
+  .tab{background:#fff;color:var(--ink-2);border:none;border-radius:0;font-size:12.5px;font-weight:500;padding:8px 6px;line-height:1.3}
+  .tab + .tab{border-left:1px solid var(--rule-strong)}
+  .tab:hover{background:var(--accent-soft);color:var(--accent)}
+  .tab.on{background:var(--accent);color:#fff;font-weight:600}
+  .tab small{display:block;font-family:var(--mono);font-size:9.5px;opacity:.8;font-weight:400;letter-spacing:.02em}
 
   details{margin-top:12px;border-top:1px solid var(--rule);padding-top:10px}
   summary{font-size:12px;color:var(--ink-2);cursor:pointer;font-weight:500;list-style:revert}
@@ -63,17 +71,25 @@
   .status.bad{border-color:#C99;background:#FBEDED;color:#8A2A2A}
   .status.warn{border-color:#D9B27A;background:var(--warn-soft);color:var(--warn)}
   .status .fix{font-family:var(--sans);display:block;margin-top:6px;line-height:1.55}
+  .status ul{margin:6px 0 0;padding-left:1.1em;font-family:var(--sans);line-height:1.5}
 
   .stations{list-style:none;margin:0;padding:0;max-height:320px;overflow-y:auto}
   .stations li{border-top:1px solid var(--rule)}
   .stations li:first-child{border-top:none}
-  .st{display:grid;grid-template-columns:auto 1fr auto;gap:9px;align-items:start;padding:9px 2px;cursor:pointer}
-  .st input{margin-top:4px}
+  .st{display:grid;grid-template-columns:auto 1fr auto;gap:9px;align-items:start;padding:9px 2px}
   .st-name{font-size:13px;font-weight:600;line-height:1.35}
   .st-meta{font-size:10.5px;color:var(--muted);font-family:var(--mono);word-break:break-all}
-  .st-side{font-family:var(--mono);font-size:11px;color:var(--accent);white-space:nowrap;padding-top:2px;text-align:right}
   .rm{background:none;border:none;color:var(--muted);font-size:15px;padding:0 2px;cursor:pointer;line-height:1}
   .rm:hover{color:#8A2A2A;background:none}
+  .badge{display:inline-block;font-family:var(--mono);font-size:9.5px;letter-spacing:.04em;padding:1px 5px;border-radius:2px;border:1px solid var(--rule-strong);color:var(--ink-2);background:#F4F7F6;vertical-align:1px;margin-left:5px}
+  .badge.epa{border-color:#3B5C8A;color:#3B5C8A;background:#EDF1F7}
+  .badge.iot{border-color:var(--accent);color:var(--accent);background:var(--accent-soft)}
+
+  .paramlist{display:flex;flex-wrap:wrap;gap:5px}
+  .chip{display:inline-flex;align-items:center;gap:5px;font-family:var(--mono);font-size:11.5px;border:1px solid var(--rule-strong);border-radius:2px;padding:4px 8px;cursor:pointer;background:#fff;color:var(--ink-2)}
+  .chip.on{border-color:var(--accent);background:var(--accent-soft);color:var(--accent);font-weight:600}
+  .chip input{margin:0;width:auto}
+  .chip-b{font-size:9px;letter-spacing:.04em;background:var(--accent);color:#fff;border-radius:1px;padding:0 3px}
 
   .cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(132px,1fr));gap:1px;background:var(--rule);border:1px solid var(--rule)}
   .card{background:#fff;padding:11px 13px 12px}
@@ -81,14 +97,19 @@
   .card .v{font-family:var(--mono);font-size:23px;font-weight:600;line-height:1.25;letter-spacing:-.02em}
   .card .u{font-size:11.5px;color:var(--muted);font-family:var(--mono)}
 
-  .chartbox{position:relative;margin-top:4px}
+  .chartwrap + .chartwrap{margin-top:18px;border-top:1px solid var(--rule);padding-top:12px}
+  .chart-title{font-family:var(--mono);font-size:11.5px;color:var(--ink-2);margin:0 0 2px;display:flex;justify-content:space-between;align-items:baseline;gap:8px}
+  .chart-title em{font-style:normal;color:var(--muted);font-size:10.5px}
+  .chartbox{position:relative;margin-top:2px}
   svg{display:block;width:100%;height:auto;overflow:visible}
   .axis-lbl{font-family:var(--mono);font-size:10px;fill:var(--muted)}
   .gridline{stroke:var(--rule);stroke-width:1}
   .gridline.day{stroke:var(--rule-strong)}
-  .readout{position:absolute;top:6px;right:6px;background:rgba(255,255,255,.94);border:1px solid var(--rule-strong);border-radius:2px;padding:6px 9px;font-family:var(--mono);font-size:11.5px;pointer-events:none;min-width:150px;line-height:1.5}
+  .readout{position:absolute;top:6px;right:6px;background:rgba(255,255,255,.94);border:1px solid var(--rule-strong);border-radius:2px;padding:6px 9px;font-family:var(--mono);font-size:11.5px;pointer-events:none;min-width:158px;line-height:1.5}
   .readout .t{color:var(--muted)}
   .swatch{display:inline-block;width:9px;height:9px;border-radius:1px;margin-right:5px}
+  .swatch.ring{border-radius:50%;border:2px solid;background:#fff!important}
+  .serieskey{display:flex;flex-wrap:wrap;gap:12px;font-family:var(--mono);font-size:11px;color:var(--ink-2);margin:0 0 10px}
 
   .raster-row{display:grid;grid-template-columns:64px 1fr;gap:8px;align-items:center;margin-bottom:2px}
   .raster-lbl{font-family:var(--mono);font-size:11px;color:var(--ink-2);text-align:right}
@@ -114,6 +135,8 @@
   .notes ol{margin:0;padding-left:1.25em;font-size:12.5px;color:var(--ink-2);line-height:1.7}
   .notes li{margin-bottom:6px}
   .notes code{font-family:var(--mono);font-size:11.5px;background:#E8EDEB;padding:1px 4px;border-radius:2px;word-break:break-all}
+
+  @media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
 </style>
 </head>
 <body>
@@ -123,33 +146,39 @@
     <p class="eyebrow">民生公共物聯網 · OGC SensorThings API</p>
     <h1>空品測站連續觀測台</h1>
     <p class="standfirst">
-      在空氣網點開任一感測器，複製那串 <code style="font-family:var(--mono);font-size:.92em">TW…</code> 裝置編號貼進來，
-      就能取回該站 3 分鐘解析度的原始觀測值，畫出連續變化與小時 pattern。
+      兩個資料來源並列：環境部<strong>智慧城鄉空品微型感測器</strong>（3 分鐘解析度，貼裝置編號）與
+      <strong>國家空品測站</strong>（每小時，打測站名稱）。同一測項可疊在同一張圖上，用來檢驗微型感測器
+      相對於法規等級測站的系統性偏差。
     </p>
   </header>
 
-  <div id="status" class="status">貼上裝置編號後按「加入測站」。</div>
+  <div id="status" class="status">先選資料來源，再輸入編號或測站名稱，按「加入測站」。</div>
 
   <div class="grid">
     <div>
-      <!-- ---------- 主要入口：裝置編號 ---------- -->
+      <!-- ---------- 主要入口 ---------- -->
       <section class="panel primary">
-        <p class="panel-title">以裝置編號加入</p>
+        <p class="panel-title">加入測站</p>
+
+        <div class="tabs" role="group" aria-label="資料來源">
+          <button type="button" class="tab on" id="tabIot" aria-pressed="true">微型感測器<small>3 分鐘 · 裝置編號</small></button>
+          <button type="button" class="tab" id="tabEpa" aria-pressed="false">國家空品測站<small>每小時 · 測站名稱</small></button>
+        </div>
+
         <label class="field">
-          <span>裝置編號 / 測站代碼</span>
-          <input type="text" id="deviceInput" placeholder="TW040203A0506884" autocomplete="off" spellcheck="false">
+          <span id="inputLabel">裝置編號（不是裝置名稱）</span>
+          <input type="text" id="deviceInput" placeholder="13580653094" autocomplete="off" spellcheck="false">
         </label>
         <div class="btn-row">
           <button id="addBtn">加入測站</button>
-          <button id="demoBtn" class="ghost">用範例編號</button>
+          <button id="demoBtn" class="ghost">用範例</button>
+          <button id="listEpaBtn" class="ghost" style="display:none">列出國家測站</button>
         </div>
-        <p class="hint">
-          支援空氣網的 <code>TW…</code> 編號、純數字的 stationID，或測站名稱片段。
-          可重複加入多站互相比較（上限 3 站）。
-        </p>
+        <p class="hint" id="addHint"></p>
+        <ul class="stations" id="browseList" style="margin-top:8px"></ul>
 
         <details>
-          <summary>改用座標找附近的測站</summary>
+          <summary>改用座標找附近的微型感測器</summary>
           <label class="field" style="margin-top:10px">
             <span>中心座標（緯度, 經度）</span>
             <div class="row2">
@@ -168,9 +197,19 @@
         <details>
           <summary>資料來源與 proxy 設定</summary>
           <label class="field" style="margin-top:10px">
-            <span>SensorThings endpoint</span>
+            <span>微型感測器 endpoint</span>
             <input type="text" id="endpoint" value="https://sta.colife.org.tw/STA_AirQuality_EPAIoT/v1.0">
           </label>
+          <label class="field">
+            <span>國家空品測站 endpoint</span>
+            <input type="text" id="endpointEpa" value="https://sta.ci.taiwan.gov.tw/STA_AirQuality_v2/v1.0">
+          </label>
+          <p class="hint">
+            兩個資料集是不同的 STA 服務。國家測站那組（<code>STA_AirQuality_v2</code>）同時收錄環境部國家測站
+            與中研院校園微型感測器，本頁以 <code>properties/authority</code> 判別並優先列出環境部的站。
+            兩台主機 <code>sta.ci.taiwan.gov.tw</code> 與 <code>sta.colife.org.tw</code> 互為鏡像，
+            某一台不通時可對調試試。
+          </p>
           <label class="field">
             <span>CORS proxy 前綴（選填）</span>
             <input type="text" id="proxy" placeholder="https://xxx.workers.dev/?url=">
@@ -192,34 +231,40 @@
 
       <!-- ---------- 取樣區間 ---------- -->
       <section class="panel">
-        <p class="panel-title">取樣區間</p>
-        <label class="field">
-          <span>測項</span>
-          <select id="param"><option value="PM2.5">PM2.5</option></select>
-        </label>
-        <label class="field">
+        <p class="panel-title">測項與取樣區間</p>
+        <label class="field" style="margin-bottom:6px"><span>測項（可複選）</span></label>
+        <div class="paramlist" id="paramList"></div>
+        <p class="hint" id="paramHint">加入測站後會自動讀取該站有哪些 datastream；標「共同」的測項兩個來源都有，會疊在同一張圖上比較。</p>
+
+        <label class="field" style="margin-top:12px">
           <span>結束日（台灣時間）</span>
           <input type="date" id="endDate">
         </label>
         <label class="field">
           <span>往前天數</span>
           <select id="days">
-            <option value="1">1 天（約 480 筆／站）</option>
-            <option value="3" selected>3 天（約 1,440 筆／站）</option>
-            <option value="7">7 天（約 3,360 筆／站，較慢）</option>
+            <option value="1">1 天</option>
+            <option value="3" selected>3 天</option>
+            <option value="7">7 天</option>
+            <option value="14">14 天</option>
           </select>
+        </label>
+        <label class="field">
+          <span>重點測項（小時 pattern 與統計表用）</span>
+          <select id="focusParam"><option value="PM2.5">PM2.5</option></select>
         </label>
         <div class="btn-row">
           <button id="loadBtn" disabled>載入觀測資料</button>
           <button id="csvBtn" class="ghost" disabled>匯出 CSV</button>
         </div>
+        <p class="hint" id="loadHint"></p>
       </section>
     </div>
 
     <!-- ================= 右欄 ================= -->
     <div>
       <section class="panel">
-        <p class="panel-title">最新讀值</p>
+        <p class="panel-title">最新讀值 <span class="count" id="cardsMeta"></span></p>
         <div class="cards" id="cards">
           <div class="card"><div class="k">狀態</div><div class="v" style="font-size:15px;padding-top:5px">—</div><div class="u">尚無資料</div></div>
         </div>
@@ -231,24 +276,27 @@
 
       <section class="panel">
         <p class="panel-title">連續變化 <span class="count" id="seriesMeta"></span></p>
-        <div class="chartbox">
-          <svg id="chart" viewBox="0 0 900 320" role="img" aria-label="濃度隨時間變化折線圖"></svg>
-          <div class="readout" id="readout" style="display:none"></div>
-        </div>
+        <div class="serieskey" id="seriesKey"></div>
+        <div id="charts"><p class="hint" style="margin:0">尚無資料。</p></div>
+        <p class="hint">
+          細線＝微型感測器（3 分鐘值）；粗線加空心圓點＝國家空品測站（小時值，已是該小時平均）。
+          兩者時間解析度不同，只能比較趨勢與同一小時的水準，不可逐點相減。
+          缺值不內插，中斷處直接斷線。
+        </p>
       </section>
 
       <section class="panel">
-        <p class="panel-title">小時 pattern <span class="count">每格 = 該小時平均</span></p>
+        <p class="panel-title">小時 pattern <span class="count" id="rasterMeta">每格 = 該小時平均</span></p>
         <div id="raster"></div>
         <div class="legend" id="legend"></div>
-        <p class="hint">
+        <p class="hint" id="rasterHint">
           著色採環境部 AQI 的 PM2.5 分段濃度值，但 AQI 正式定義是 <strong>24 小時移動平均</strong>；
           這裡是小時平均，只能做相對比較，不等同官方 AQI 判定。
         </p>
       </section>
 
       <section class="panel">
-        <p class="panel-title">小時統計 <span class="count">依測站 × 小時</span></p>
+        <p class="panel-title">小時統計 <span class="count" id="tableMeta">依測站 × 小時</span></p>
         <div class="tablescroll"><table id="statTable"><tbody><tr><td class="hint" style="border:none">尚無資料。</td></tr></tbody></table></div>
       </section>
     </div>
@@ -257,13 +305,13 @@
   <section class="notes">
     <h2>方法與限制</h2>
     <ol>
-      <li><strong>資料來源</strong>：民生公共物聯網資料服務平台，環境部「智慧城鄉空品微型感測器」資料集（全國約 10,999 點，更新頻率 3 分鐘，2017 年 6 月起），以 OGC SensorThings API v1.0 介接，免 API key。授權：政府資料開放授權條款第 1 版。</li>
-      <li><strong>編號比對</strong>：輸入值會依序嘗試 <code>properties/locationId</code>、<code>properties/stationID</code>、完整 <code>name</code>、名稱片段四種比對；命中即停。</li>
-      <li><strong>時區</strong>：API 的 <code>phenomenonTime</code> 為 UTC，本頁一律轉為台灣時間（UTC+8）後才分組與繪圖。</li>
-      <li><strong>分頁</strong>：SensorThings API 單頁上限 100 筆，以 <code>$skip</code> 迴圈取回完整區間，併發上限 4。</li>
-      <li><strong>量測品質</strong>：微型感測器多為光散射法，靈敏度與國家級測站儀器有落差，環境部明示其數據不宜直接比對空氣品質標準，只適合觀察<strong>相對趨勢與時間 pattern</strong>。高濕度下光散射法對 PM2.5 常有正偏誤。</li>
-      <li><strong>缺值</strong>：感測器離線或回傳延遲會造成時序中斷，本頁以斷線呈現（不內插）；小時有效筆數 &lt; 5 標記為低樣本（半透明）。</li>
-      <li><strong>用途</strong>：個人資料探索工具，非法規依據。若要引用於論文或正式報告，應改用國家測站經品保程序後的數據。</li>
+      <li><strong>資料來源</strong>：民生公共物聯網資料服務平台。（a）環境部「智慧城鄉空品微型感測器」，全國約 10,999 點、3 分鐘更新、2017 年 6 月起，endpoint <code>https://sta.colife.org.tw/STA_AirQuality_EPAIoT/v1.0/</code>；（b）環境部「國家空品測站」，77 站、每小時、1998 年起，endpoint <code>https://sta.ci.taiwan.gov.tw/STA_AirQuality_v2/v1.0/</code>（同一服務內以 <code>properties/authority</code> 區分環境部測站與中研院校園感測器）。皆為 OGC SensorThings API v1.0，免 API key，授權：政府資料開放授權條款第 1 版。</li>
+      <li><strong>編號比對</strong>：微型感測器依序試 <code>properties/locationId</code>、<code>properties/stationID</code>、完整 <code>name</code>、名稱片段；國家測站依序試 <code>properties/stationName</code>、<code>name</code>、<code>properties/stationID</code>、名稱片段。命中即停。</li>
+      <li><strong>時區</strong>：API 的 <code>phenomenonTime</code> 為 UTC，本頁一律轉為台灣時間（UTC+8）後才分組與繪圖。若 <code>phenomenonTime</code> 是時間區間（<code>起/迄</code>），取<strong>區間起點</strong>當作該筆的時標。</li>
+      <li><strong>分頁</strong>：SensorThings API 單頁上限 100 筆。本頁先以 <code>$count=true</code> 取總筆數再用 <code>$skip</code> 併發取回（上限 4）；若伺服器未回 <code>@iot.count</code>，改為逐頁跟隨 <code>@iot.nextLink</code>。單頁失敗會自動重試（僅對 429／5xx），仍失敗則計數並在狀態列標示「資料不完整」——不會靜默略過。</li>
+      <li><strong>兩個來源的可比性</strong>：國家測站是法規等級儀器（β 射線／震盪天平等）並經品保程序，微型感測器多為光散射法，靈敏度與準確度不同，環境部明示微型感測器數據不宜直接比對空氣品質標準，只適合觀察<strong>相對趨勢與時間 pattern</strong>；高濕度下光散射法對 PM2.5 常有正偏誤。兩者疊圖的用途是看偏差方向與時間結構，不是校正。</li>
+      <li><strong>缺值</strong>：不內插、不填補。中斷處直接斷線（斷線門檻＝該序列取樣間隔中位數的 2.5 倍，微型感測器至少 20 分鐘）。小時有效筆數不足（3 分鐘序列 &lt; 5 筆）標記為低樣本（半透明）；小時值序列本來每小時就只有 1 筆，不套用此標記。</li>
+      <li><strong>用途</strong>：個人資料探索工具，非法規依據。若要引用於論文或正式報告，應改用國家測站經品保程序後的數據，並註明資料擷取日期。</li>
     </ol>
   </section>
 </div>
@@ -282,13 +330,38 @@ const PM25_BANDS = [
   {max:Infinity,label:"危害",           color:"#7E0123"}
 ];
 const SERIES_COLORS = ["#1F6255","#B4532A","#3B5C8A"];
-const MAX_STATIONS = 3;
-const CONCURRENCY = 4;
-const DEMO_ID = "TW040203A0506884";
+const MAX_STATIONS  = 3;
+const CONCURRENCY   = 4;      // 同時對來源站的請求數上限
+const MAX_PAGES     = 200;    // 單一序列的分頁上限，避免失控迴圈
+const PAGE_SIZE     = 100;    // 伺服器單頁上限
+
+const SOURCES = {
+  iot: {
+    key:"iot", label:"智慧城鄉空品微型感測器", badge:"微型",
+    cadence:3, endpointEl:"endpoint", demo:"13580653094",
+    inputLabel:"裝置編號（不是裝置名稱）",
+    placeholder:"13580653094",
+    hint:'空氣網（<a href="https://wot.moenv.gov.tw" target="_blank" rel="noopener">wot.moenv.gov.tw</a>）點開感測點後，'
+       + '面板中間那串粗體<strong>編號</strong>，例如 <code>13580653094</code>（純數字的 stationID）或 '
+       + '<code>TW040203A0506884</code>（locationId）。<strong>這是裝置編號，不是裝置名稱</strong>，'
+       + '輸入「中山國小」之類的地點名稱查不到。'
+  },
+  epa: {
+    key:"epa", label:"國家空品測站", badge:"國站",
+    cadence:60, endpointEl:"endpointEpa", demo:"板橋",
+    inputLabel:"測站名稱",
+    placeholder:"板橋",
+    hint:'環境部國家空品測站共 77 站，這裡打<strong>測站名稱</strong>即可，例如 <code>板橋</code>、'
+       + '<code>萬華</code>、<code>三重</code>。不確定名稱就按「列出國家測站」。資料為<strong>每小時</strong>一筆。'
+  }
+};
 
 /* ===================== 工具 ===================== */
 
 const $ = id => document.getElementById(id);
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+const esc = s => String(s).replace(/'/g, "''");
+const escHtml = s => String(s).replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
 
 function setStatus(msg, kind, fixHtml){
   const el = $("status");
@@ -305,8 +378,16 @@ function haversine(la1, lo1, la2, lo2){
   return 2*R*Math.asin(Math.sqrt(a));
 }
 
-function toTaipei(iso){
-  const ms = new Date(iso).getTime();
+/* phenomenonTime 可能是時間點，也可能是 "起/迄" 區間；區間取起點。一律 UTC。 */
+function parseMs(pt){
+  const s = String(pt || "");
+  const iso = s.includes("/") ? s.split("/")[0] : s;
+  const ms = Date.parse(iso);
+  return Number.isFinite(ms) ? ms : null;
+}
+
+/* UTC → 台灣時間（UTC+8）的日期／小時。分組、繪圖、統計都走這裡。 */
+function taipeiParts(ms){
   const d = new Date(ms + 8*3600e3);
   return {
     ms,
@@ -315,9 +396,10 @@ function toTaipei(iso){
     hhmm: String(d.getUTCHours()).padStart(2,"0")+":"+String(d.getUTCMinutes()).padStart(2,"0")
   };
 }
+const tpe = ms => new Date(ms + 8*3600e3);
 
-const base = () => $("endpoint").value.trim().replace(/\/$/,"");
-const proxy = () => $("proxy").value.trim();
+const baseFor = src => $(SOURCES[src].endpointEl).value.trim().replace(/\/$/,"");
+const proxy   = () => $("proxy").value.trim();
 
 const isNetworkFailure = e => e instanceof TypeError;
 
@@ -325,11 +407,19 @@ const CORS_FIX =
   "多半是瀏覽器的跨來源限制。到「資料來源與 proxy 設定」填入 Cloudflare Worker 網址即可，" +
   "repo 裡的 <code>worker.js</code> 直接貼上就能用。";
 
-async function api(url, signal){
+/* 只對 429／5xx 重試（伺服器忙）；TypeError（CORS／離線）重試沒有意義，直接拋。 */
+async function api(url, signal, tries){
+  tries = tries || 3;
   const target = proxy() ? proxy() + encodeURIComponent(url) : url;
-  const r = await fetch(target, {signal, headers:{Accept:"application/json"}});
-  if (!r.ok) throw new Error("HTTP " + r.status);
-  return r.json();
+  let last;
+  for (let a = 0; a < tries; a++){
+    if (a) await sleep(400 * Math.pow(3, a-1));
+    const r = await fetch(target, {signal, headers:{Accept:"application/json"}});
+    if (r.ok) return r.json();
+    last = new Error("HTTP " + r.status);
+    if (!(r.status === 429 || r.status >= 500)) throw last;
+  }
+  throw last;
 }
 
 async function pool(tasks, limit, onTick){
@@ -347,87 +437,200 @@ async function pool(tasks, limit, onTick){
   return out;
 }
 
+/* nextLink 可能是絕對或相對網址 */
+function absolutize(link, b){
+  return /^https?:\/\//i.test(link) ? link : b.replace(/\/$/,"") + "/" + String(link).replace(/^\//,"");
+}
+
 /* ===================== 狀態 ===================== */
 
-let picked = [];    // 已加入的測站
-let dataset = [];
+let picked = [];                            // 已加入的測站
+let dataset = [];                           // [{station, param, unit, points, cadenceMin, incomplete}]
+let selectedParams = new Set(["PM2.5"]);
+let curSrc = "iot";
 let abortCtl = null;
 
-function mkStation(t, lat, lon){
+function mkStation(t, lat, lon, src){
   const p = t.properties || {};
   return {
-    id: t["@iot.id"],
-    key: p.locationId || p.stationID || String(t["@iot.id"]),
+    src, id: t["@iot.id"], uid: src + ":" + t["@iot.id"],
     locationId: p.locationId || "",
-    stationID: p.stationID || "",
-    name: p.stationName || t.name || ("Thing " + t["@iot.id"]),
-    city: p.city || "", township: p.township || "",
+    stationID: p.stationID || p.stationId || "",
+    stationName: p.stationName || "",
+    name: t.name || ("Thing " + t["@iot.id"]),
+    authority: p.authority || p.organization || "",
+    city: p.city || p.county || "",
+    township: p.township || "",
     area: p.areaDescription || p.areaType || "",
-    lat, lon
+    lat, lon, streams: []
   };
 }
 
-function stationLabel(s){
-  return s.area || s.township || s.name.replace("智慧城鄉空品微型感測器-","") || s.key;
+/* 寫進網址 hash 的識別字串 */
+function stationKey(s){
+  return s.src === "epa"
+    ? (s.stationName || s.name || s.stationID)
+    : (s.locationId || s.stationID || String(s.id));
 }
 
-/* ===================== 以編號解析測站 ===================== */
+function stationLabel(s){
+  if (s.src === "epa")
+    return s.stationName || s.name.replace(/^(空氣品質監測站|國家空品測站)[-－:：]?/,"") || s.stationID || String(s.id);
+  return s.area || s.township || s.name.replace("智慧城鄉空品微型感測器-","") || stationKey(s);
+}
 
-async function resolveDevice(q){
-  const b = base();
-  const filters = [
-    `properties/locationId eq '${q}'`,
-    `properties/stationID eq '${q}'`,
-    `name eq '智慧城鄉空品微型感測器-${q}'`,
-    `substringof('${q}',name)`,
-    `contains(name,'${q}')`
+const colorOf = s => SERIES_COLORS[Math.max(0, picked.findIndex(p => p.uid === s.uid)) % SERIES_COLORS.length];
+const isHourly = d => d.cadenceMin >= 30;
+
+/* ===================== 解析測站 ===================== */
+
+function filtersFor(src, q){
+  const e = esc(q);
+  if (src === "epa") return [
+    `properties/stationName eq '${e}'`,
+    `name eq '${e}'`,
+    `properties/stationID eq '${e}'`,
+    `substringof('${e}',name)`,
+    `contains(name,'${e}')`,
+    `substringof('${e}',properties/stationName)`
   ];
-  for (const f of filters){
-    const url = b + "/Things?$top=5&$expand=Locations&$filter=" + encodeURIComponent(f);
+  return [
+    `properties/locationId eq '${e}'`,
+    `properties/stationID eq '${e}'`,
+    `name eq '智慧城鄉空品微型感測器-${e}'`,
+    `substringof('${e}',name)`,
+    `contains(name,'${e}')`
+  ];
+}
+
+function thingsToStations(js, src){
+  return (js.value || []).map(t => {
+    const loc = (t.Locations || []).find(l => l.location && l.location.coordinates) || (t.Locations || [])[0];
+    const c = loc && loc.location && loc.location.coordinates;
+    return mkStation(t, c ? c[1] : NaN, c ? c[0] : NaN, src);
+  });
+}
+
+async function resolveDevice(q, src){
+  const b = baseFor(src);
+  for (const f of filtersFor(src, q)){
+    const url = b + "/Things?$top=10&$expand=Locations&$filter=" + encodeURIComponent(f);
     let js;
-    try { js = await api(url); }
+    try { js = await api(url, null, 1); }
     catch (e){ if (isNetworkFailure(e)) throw e; continue; }
     if (js && js.value && js.value.length){
-      return js.value.map(t => {
-        const loc = (t.Locations || [])[0];
-        const c = loc && loc.location && loc.location.coordinates;
-        return mkStation(t, c ? c[1] : NaN, c ? c[0] : NaN);
-      });
+      const list = thingsToStations(js, src);
+      // 國家測站那組服務同時含中研院校園感測器，優先環境部的站
+      if (src === "epa") list.sort((a,b2) => (/環境|環保/.test(b2.authority) ? 1 : 0) - (/環境|環保/.test(a.authority) ? 1 : 0));
+      return list;
     }
   }
   return [];
 }
 
-async function addDevice(q){
+async function loadStreams(st){
+  const url = baseFor(st.src) + `/Things(${st.id})/Datastreams?$top=100&$select=name,description,unitOfMeasurement,@iot.id`;
+  const js = await api(url, null, 2);
+  st.streams = (js.value || []).map(d => ({
+    id: d["@iot.id"], name: d.name,
+    unit: (d.unitOfMeasurement || {}).symbol || ""
+  }));
+}
+
+async function addDevice(q, src){
   q = (q || "").trim();
-  if (!q){ setStatus("請先輸入裝置編號。", "warn"); return; }
-  if (picked.length >= MAX_STATIONS){ setStatus("最多同時比較 " + MAX_STATIONS + " 站，先移除一站再加。", "warn"); return; }
+  src = src || curSrc;
+  if (!q){ setStatus("請先輸入" + (src === "epa" ? "測站名稱" : "裝置編號") + "。", "warn"); return; }
+  if (picked.length >= MAX_STATIONS){
+    setStatus("最多同時比較 " + MAX_STATIONS + " 站，先移除一站再加。", "warn"); return;
+  }
 
   $("addBtn").disabled = true;
-  setStatus("查詢 " + q + " …", "busy");
+  setStatus("查詢 " + escHtml(q) + "（" + SOURCES[src].label + "）…", "busy");
   let found;
-  try { found = await resolveDevice(q); }
+  try { found = await resolveDevice(q, src); }
   catch (e){
-    setStatus("無法連線到資料來源。", "bad", CORS_FIX);
+    setStatus("無法連線到" + SOURCES[src].label + "的資料來源。", "bad",
+              isNetworkFailure(e) ? CORS_FIX : "錯誤：" + escHtml(e.message));
     $("addBtn").disabled = false;
     return;
   }
   $("addBtn").disabled = false;
 
   if (!found.length){
-    setStatus("查無 " + q + "。確認編號是否完整，或改用座標搜尋。", "warn");
+    setStatus("查無 " + escHtml(q) + "。", "warn",
+      src === "epa" ? "確認測站名稱（例如「板橋」而非「板橋站」），或按「列出國家測站」直接挑。"
+                    : "確認是<strong>裝置編號</strong>而不是裝置名稱，或改用座標搜尋。");
     return;
   }
   const s = found[0];
-  if (picked.some(p => p.id === s.id)){ setStatus("這一站已經在清單裡了。", "warn"); return; }
+  if (picked.some(p => p.uid === s.uid)){ setStatus("這一站已經在清單裡了。", "warn"); return; }
 
   picked.push(s);
   $("deviceInput").value = "";
   renderPicked();
-  setStatus(`已加入「${stationLabel(s)}」${found.length > 1 ? `（另有 ${found.length-1} 筆同名結果，取第一筆）` : ""}。按「載入觀測資料」。`);
+
+  try { await loadStreams(s); }
+  catch (e){ /* 測項清單讀不到不擋流程，載入時還會再讀一次 */ }
+  renderParams();
+  renderPicked();
+
+  const extra = found.length > 1 ? `（另有 ${found.length-1} 筆符合，取第一筆）` : "";
+  const sTxt = s.streams.length ? `，可用測項 ${s.streams.length} 項` : "";
+  setStatus(`已加入「${escHtml(stationLabel(s))}」${extra}${sTxt}。勾選測項後按「載入觀測資料」。`);
+  syncHash();
 }
 
-/* ===================== 座標搜尋 ===================== */
+/* 列出國家空品測站，直接挑 */
+async function listEpaStations(){
+  const b = baseFor("epa");
+  $("listEpaBtn").disabled = true;
+  setStatus("讀取國家空品測站清單…", "busy");
+  const tries = [
+    "properties/authority eq '行政院環境保護署'",
+    "properties/authority eq '環境部'",
+    null
+  ];
+  let list = [];
+  try {
+    for (const f of tries){
+      const url = b + "/Things?$top=100&$expand=Locations" + (f ? "&$filter=" + encodeURIComponent(f) : "");
+      let js;
+      try { js = await api(url, null, 2); }
+      catch (e){ if (isNetworkFailure(e)) throw e; continue; }
+      list = thingsToStations(js, "epa");
+      if (list.length) break;
+    }
+  } catch (e){
+    setStatus("無法連線到國家空品測站的資料來源。", "bad", isNetworkFailure(e) ? CORS_FIX : escHtml(e.message));
+    $("listEpaBtn").disabled = false;
+    return;
+  }
+  $("listEpaBtn").disabled = false;
+
+  const ul = $("browseList");
+  if (!list.length){
+    ul.innerHTML = '<li style="border:none"><p class="hint" style="margin:0">endpoint 沒有回傳測站。確認「國家空品測站 endpoint」是否正確。</p></li>';
+    setStatus("國家測站清單是空的。", "warn");
+    return;
+  }
+  list.sort((a,b2) => stationLabel(a).localeCompare(stationLabel(b2), "zh-Hant"));
+  ul.innerHTML = list.map(s => `
+    <li><div class="st">
+      <span style="width:0"></span>
+      <span>
+        <span class="st-name">${escHtml(stationLabel(s))}</span>
+        <span class="badge epa">${escHtml(s.authority || "國家測站")}</span><br>
+        <span class="st-meta">${escHtml(s.stationID || s.name)}${s.city ? " · " + escHtml(s.city) : ""}</span>
+      </span>
+      <button class="ghost" data-q="${escHtml(stationKey(s))}" style="padding:3px 8px;font-size:11px">加入</button>
+    </div></li>`).join("");
+  ul.querySelectorAll("button").forEach(btn =>
+    btn.addEventListener("click", () => addDevice(btn.dataset.q, "epa")));
+  setStatus(`國家空品測站共 ${list.length} 站，點「加入」即可。`);
+}
+
+/* ===================== 座標搜尋（微型感測器） ===================== */
 
 async function findNearby(){
   const la = parseFloat($("lat").value), lo = parseFloat($("lon").value);
@@ -440,19 +643,19 @@ async function findNearby(){
   const dLa = rad/111320, dLo = rad/(111320*Math.cos(la*Math.PI/180));
   const S = la-dLa, N = la+dLa, W = lo-dLo, E = lo+dLo;
   const poly = `POLYGON((${W} ${S},${E} ${S},${E} ${N},${W} ${N},${W} ${S}))`;
-  const url = base() + "/Locations?$top=100&$expand=Things&$filter=" +
+  const url = baseFor("iot") + "/Locations?$top=100&$expand=Things&$filter=" +
               encodeURIComponent(`geo.intersects(Locations/location,geography'${poly}')`);
 
   let list = [];
   try {
-    const js = await api(url);
+    const js = await api(url, null, 2);
     list = (js.value || []).flatMap(loc => {
       const c = loc.location && loc.location.coordinates;
       if (!c) return [];
-      return (loc.Things || []).map(t => mkStation(t, c[1], c[0]));
+      return (loc.Things || []).map(t => mkStation(t, c[1], c[0], "iot"));
     });
   } catch (e){
-    setStatus(isNetworkFailure(e) ? "無法連線到資料來源。" : "空間查詢失敗：" + e.message,
+    setStatus(isNetworkFailure(e) ? "無法連線到資料來源。" : "空間查詢失敗：" + escHtml(e.message),
               "bad", isNetworkFailure(e) ? CORS_FIX : "");
     $("findBtn").disabled = false;
     return;
@@ -460,7 +663,7 @@ async function findNearby(){
   $("findBtn").disabled = false;
 
   const seen = new Set();
-  const near = list.filter(s => !seen.has(s.id) && seen.add(s.id))
+  const near = list.filter(s => !seen.has(s.uid) && seen.add(s.uid))
                    .map(s => ({...s, dist: haversine(la, lo, s.lat, s.lon)}))
                    .filter(s => s.dist <= rad)
                    .sort((a,b) => a.dist - b.dist)
@@ -473,16 +676,16 @@ async function findNearby(){
     return;
   }
   ul.innerHTML = near.map(s => `
-    <li><label class="st">
+    <li><div class="st">
       <span style="width:0"></span>
       <span>
-        <span class="st-name">${stationLabel(s)}</span><br>
-        <span class="st-meta">${s.locationId || s.stationID}</span>
+        <span class="st-name">${escHtml(stationLabel(s))}</span><br>
+        <span class="st-meta">${escHtml(s.locationId || s.stationID)} · ${Math.round(s.dist)} m</span>
       </span>
-      <button class="ghost" data-id="${s.locationId || s.stationID}" style="padding:3px 8px;font-size:11px">加入</button>
-    </label></li>`).join("");
+      <button class="ghost" data-q="${escHtml(s.locationId || s.stationID)}" style="padding:3px 8px;font-size:11px">加入</button>
+    </div></li>`).join("");
   ul.querySelectorAll("button").forEach(b =>
-    b.addEventListener("click", ev => { ev.preventDefault(); addDevice(b.dataset.id); }));
+    b.addEventListener("click", () => addDevice(b.dataset.q, "iot")));
   setStatus(`找到 ${near.length} 個感測器，最近的距離中心點 ${Math.round(near[0].dist)} m。`);
 }
 
@@ -494,33 +697,149 @@ function renderPicked(){
   if (!picked.length){
     ul.innerHTML = '<li style="border:none"><p class="hint" style="margin:0">還沒有測站。</p></li>';
     $("loadBtn").disabled = true;
+    updateLoadHint();
     return;
   }
   ul.innerHTML = picked.map((s,i) => `
     <li><div class="st">
       <span class="swatch" style="background:${SERIES_COLORS[i]};margin-top:5px"></span>
       <span>
-        <span class="st-name">${stationLabel(s)}</span><br>
-        <span class="st-meta">${s.locationId || s.stationID}${s.township ? " · " + s.township : ""}</span>
+        <span class="st-name">${escHtml(stationLabel(s))}</span><span class="badge ${s.src}">${SOURCES[s.src].badge}</span><br>
+        <span class="st-meta">${escHtml(s.locationId || s.stationID || s.name)}${s.township ? " · " + escHtml(s.township) : (s.city ? " · " + escHtml(s.city) : "")}${
+          s.streams.length ? " · " + s.streams.length + " 測項" : ""}</span>
       </span>
-      <button class="rm" data-i="${i}" aria-label="移除">&times;</button>
+      <button class="rm" data-i="${i}" aria-label="移除 ${escHtml(stationLabel(s))}">&times;</button>
     </div></li>`).join("");
   ul.querySelectorAll(".rm").forEach(b => b.addEventListener("click", () => {
     picked.splice(Number(b.dataset.i), 1);
     dataset = [];
-    renderPicked(); render(); syncHash();
+    renderPicked(); renderParams(); render(); syncHash();
     $("csvBtn").disabled = true;
   }));
   $("loadBtn").disabled = false;
+  updateLoadHint();
   syncHash();
+}
+
+/* ===================== 測項 ===================== */
+
+function paramIndex(){
+  const m = new Map();   // name -> Set(src)
+  picked.forEach(s => s.streams.forEach(d => {
+    if (!m.has(d.name)) m.set(d.name, new Set());
+    m.get(d.name).add(s.src);
+  }));
+  return m;
+}
+
+function paramSort(a,b){
+  const rank = n => n === "PM2.5" ? 0 : /^PM/.test(n) ? 1 : 2;
+  return rank(a) - rank(b) || a.localeCompare(b, "en");
+}
+
+function renderParams(){
+  const idx = paramIndex();
+  if (!idx.size) idx.set("PM2.5", new Set());
+  // 已勾但目前沒有任何站提供的測項保留在清單中，方便切換測站
+  selectedParams.forEach(n => { if (!idx.has(n)) idx.set(n, new Set()); });
+
+  const box = $("paramList");
+  box.innerHTML = [...idx.keys()].sort(paramSort).map(n => {
+    const shared = idx.get(n).size > 1;
+    const on = selectedParams.has(n);
+    return `<label class="chip${on ? " on" : ""}">
+      <input type="checkbox" value="${escHtml(n)}"${on ? " checked" : ""}>${escHtml(n)}${
+      shared ? '<span class="chip-b">共同</span>' : ""}</label>`;
+  }).join("");
+  box.querySelectorAll("input").forEach(cb => cb.addEventListener("change", () => {
+    if (cb.checked) selectedParams.add(cb.value); else selectedParams.delete(cb.value);
+    if (!selectedParams.size) selectedParams.add("PM2.5");
+    renderParams(); syncHash(); updateLoadHint();
+  }));
+
+  const fp = $("focusParam"), prev = fp.value;
+  const opts = [...selectedParams].sort(paramSort);
+  fp.innerHTML = opts.map(n => `<option value="${escHtml(n)}">${escHtml(n)}</option>`).join("");
+  fp.value = opts.includes(prev) ? prev : (opts.includes("PM2.5") ? "PM2.5" : opts[0] || "");
+  updateLoadHint();
+}
+
+const focusParam = () => $("focusParam").value || "PM2.5";
+
+function updateLoadHint(){
+  const days = parseInt($("days").value,10) || 1;
+  let reqs = 0, series = 0;
+  picked.forEach(s => {
+    const names = s.streams.length ? s.streams.map(d => d.name) : ["PM2.5"];
+    names.filter(n => selectedParams.has(n)).forEach(() => {
+      series++;
+      const perDay = 24*60 / SOURCES[s.src].cadence;
+      reqs += Math.max(1, Math.ceil(perDay*days / PAGE_SIZE));
+    });
+  });
+  $("loadHint").innerHTML = series
+    ? `預計 ${series} 條序列、約 ${reqs} 次請求（併發上限 ${CONCURRENCY}）。序列多或天數長會比較久。`
+    : "勾選的測項在已加入的測站上都不存在，載入會沒有資料。";
 }
 
 /* ===================== 讀觀測值 ===================== */
 
+/* 回傳 {rows, failed, capped}；分頁失敗會計數，不靜默略過。 */
+async function fetchSeries(b, dsId, isoStart, isoEnd, sig, onTick){
+  const obsUrl = b + `/Datastreams(${dsId})/Observations` +
+    "?$select=phenomenonTime,result&$orderby=phenomenonTime asc&$top=" + PAGE_SIZE + "&$filter=" +
+    encodeURIComponent(`phenomenonTime ge ${isoStart} and phenomenonTime le ${isoEnd}`);
+
+  const first = await api(obsUrl + "&$count=true", sig);
+  const rows = (first.value || []).slice();
+  const total = Number(first["@iot.count"]);
+  const step = (first.value || []).length || PAGE_SIZE;
+  let failed = 0, capped = false;
+
+  if (Number.isFinite(total) && total > rows.length && step > 0){
+    const want = Math.ceil(total / step);
+    const pages = Math.min(want, MAX_PAGES);
+    capped = want > MAX_PAGES;
+    const tasks = [];
+    for (let p = 1; p < pages; p++){
+      const skip = p * step;
+      tasks.push(async () => {
+        try { return (await api(obsUrl + "&$skip=" + skip, sig)).value || []; }
+        catch (e){ if (e.name === "AbortError") throw e; failed++; return []; }
+      });
+    }
+    const rest = await pool(tasks, CONCURRENCY, onTick);
+    rest.forEach(v => rows.push(...v));
+  } else {
+    // 伺服器沒給 @iot.count 就跟著 nextLink 逐頁走，避免只拿到第一頁
+    let next = first["@iot.nextLink"], guard = 0;
+    while (next && guard < MAX_PAGES){
+      guard++;
+      let js;
+      try { js = await api(absolutize(next, b), sig); }
+      catch (e){ if (e.name === "AbortError") throw e; failed++; break; }
+      rows.push(...(js.value || []));
+      next = js["@iot.nextLink"];
+      if (onTick) onTick(guard, guard + (next ? 1 : 0));
+    }
+    capped = !!next;
+  }
+  return {rows, failed, capped};
+}
+
+function medianStepMin(points){
+  if (points.length < 3) return null;
+  const d = [];
+  for (let i = 1; i < points.length; i++) d.push(points[i].ms - points[i-1].ms);
+  d.sort((a,b) => a-b);
+  return d[Math.floor(d.length/2)] / 60e3;
+}
+
 async function loadObservations(){
   if (!picked.length) return;
-  const b = base(), paramName = $("param").value, days = parseInt($("days").value,10);
+  const days = parseInt($("days").value,10);
   const endLocal = $("endDate").value;
+  if (!endLocal){ setStatus("請先選結束日。", "warn"); return; }
   const endUTC = new Date(endLocal + "T00:00:00Z").getTime() + 24*3600e3 - 8*3600e3;
   const startUTC = endUTC - days*24*3600e3;
   const isoStart = new Date(startUTC).toISOString(), isoEnd = new Date(endUTC).toISOString();
@@ -531,159 +850,244 @@ async function loadObservations(){
 
   $("loadBtn").disabled = true; $("csvBtn").disabled = true;
   dataset = [];
+  const warns = [];
 
   try {
     for (const st of picked){
-      setStatus(`「${stationLabel(st)}」：查詢 datastream…`, "busy");
-      const dsJson = await api(b + `/Things(${st.id})/Datastreams?$select=name,@iot.id,unitOfMeasurement`, sig);
-      const streams = dsJson.value || [];
-      syncParamOptions(streams.map(d => d.name));
-      const ds = streams.find(d => d.name === paramName) || streams[0];
-      if (!ds){ setStatus(`「${stationLabel(st)}」沒有可用的 datastream。`, "warn"); continue; }
+      const b = baseFor(st.src), lbl = stationLabel(st);
+      if (!st.streams.length){
+        setStatus(`「${escHtml(lbl)}」：查詢 datastream…`, "busy");
+        try { await loadStreams(st); }
+        catch (e){
+          if (isNetworkFailure(e)) throw e;
+          warns.push(`「${lbl}」讀不到 datastream 清單：${e.message}`);
+          continue;
+        }
+        renderParams();
+      }
 
-      const obsUrl = b + `/Datastreams(${ds["@iot.id"]})/Observations` +
-        "?$select=phenomenonTime,result&$orderby=phenomenonTime asc&$count=true&$top=100&$filter=" +
-        encodeURIComponent(`phenomenonTime ge ${isoStart} and phenomenonTime le ${isoEnd}`);
+      const jobs = st.streams.filter(d => selectedParams.has(d.name));
+      if (!jobs.length){
+        warns.push(`「${lbl}」沒有勾選中的測項（該站可用：${st.streams.map(d => d.name).join("、") || "無"}）`);
+        continue;
+      }
 
-      const first = await api(obsUrl, sig);
-      const total = first["@iot.count"] || (first.value || []).length;
-      const pages = Math.ceil(total / 100);
-      const tasks = [];
-      for (let p = 1; p < pages; p++)
-        tasks.push(() => api(obsUrl + "&$skip=" + p*100, sig).catch(() => ({value:[]})));
-      const rest = await pool(tasks, CONCURRENCY, (d,n) =>
-        setStatus(`「${stationLabel(st)}」：${d}/${n} 頁（共 ${total} 筆）…`, "busy"));
+      for (const ds of jobs){
+        setStatus(`「${escHtml(lbl)}」${escHtml(ds.name)}：讀取中…`, "busy");
+        const res = await fetchSeries(b, ds.id, isoStart, isoEnd, sig, (d,n) =>
+          setStatus(`「${escHtml(lbl)}」${escHtml(ds.name)}：${d}/${n} 頁…`, "busy"));
 
-      const points = [first, ...rest].flatMap(j => j.value || [])
-        .map(o => {
+        const points = res.rows.map(o => {
+          const ms = parseMs(o.phenomenonTime);
           const v = Number(o.result);
-          if (!isFinite(v) || v < 0) return null;
-          return {...toTaipei(o.phenomenonTime), value: v};
-        })
-        .filter(Boolean)
-        .sort((a,b2) => a.ms - b2.ms);
+          if (ms === null || !isFinite(v) || v < 0) return null;
+          return {...taipeiParts(ms), value: v};
+        }).filter(Boolean).sort((a,b2) => a.ms - b2.ms);
 
-      dataset.push({station: st, param: ds.name,
-                    unit: (ds.unitOfMeasurement || {}).symbol || "µg/m³", points});
+        // 同一時標可能重複回傳，去重
+        const uniq = [];
+        for (const p of points) if (!uniq.length || uniq[uniq.length-1].ms !== p.ms) uniq.push(p);
+
+        const cadence = medianStepMin(uniq) || SOURCES[st.src].cadence;
+        dataset.push({
+          station: st, param: ds.name,
+          unit: ds.unit || (ds.name === "PM2.5" || /^PM/.test(ds.name) ? "µg/m³" : ""),
+          points: uniq, cadenceMin: cadence
+        });
+
+        if (res.failed) warns.push(`「${lbl}」${ds.name}：${res.failed} 頁抓取失敗，資料不完整`);
+        if (res.capped) warns.push(`「${lbl}」${ds.name}：超過單序列 ${MAX_PAGES} 頁上限，只取回前段`);
+        if (uniq.length){
+          const cov = (uniq[uniq.length-1].ms - uniq[0].ms) / 864e5;
+          if (cov < days*0.8)
+            warns.push(`「${lbl}」${ds.name}：實際只涵蓋 ${cov.toFixed(1)} 天（要求 ${days} 天），該區間可能離線或伺服器未回完整分頁`);
+        } else {
+          warns.push(`「${lbl}」${ds.name}：區間內沒有有效觀測值`);
+        }
+      }
     }
   } catch (e){
     if (e.name === "AbortError") return;
-    setStatus(isNetworkFailure(e) ? "連線中斷。" : "載入失敗：" + e.message,
+    setStatus(isNetworkFailure(e) ? "連線中斷。" : "載入失敗：" + escHtml(e.message),
               "bad", isNetworkFailure(e) ? CORS_FIX : "");
     $("loadBtn").disabled = false;
     return;
   }
 
   const n = dataset.reduce((a,d) => a + d.points.length, 0);
-  setStatus(n ? `已載入 ${n} 筆觀測值（${dataset.length} 站 × ${days} 天）。`
-              : "區間內沒有觀測值。感測器可能在這段期間離線，換個日期試試。", n ? "" : "warn");
+  const head = n
+    ? `已載入 ${n} 筆觀測值：${dataset.length} 條序列 / ${new Set(dataset.map(d => d.station.uid)).size} 站 × ${days} 天。`
+    : "沒有取回任何觀測值。";
+  setStatus(head + (warns.length ? "" : ""), n ? (warns.length ? "warn" : "") : "warn",
+            warns.length ? "<ul>" + warns.map(w => "<li>" + escHtml(w) + "</li>").join("") + "</ul>" : "");
   render();
   $("loadBtn").disabled = false;
   $("csvBtn").disabled = !n;
-}
-
-function syncParamOptions(names){
-  const sel = $("param");
-  const have = new Set([...sel.options].map(o => o.value));
-  names.filter(x => !have.has(x)).forEach(x => {
-    const o = document.createElement("option"); o.value = o.textContent = x; sel.appendChild(o);
-  });
+  syncHash();
 }
 
 /* ===================== 繪圖 ===================== */
 
-function render(){ renderCards(); renderChart(); renderRaster(); renderLegend(); renderTable(); }
+function render(){ renderKey(); renderCards(); renderCharts(); renderRaster(); renderTable(); }
+
+const live = () => dataset.filter(d => d.points.length);
+
+function renderKey(){
+  const box = $("seriesKey"), L = live();
+  if (!L.length){ box.innerHTML = ""; return; }
+  const seen = new Set();
+  box.innerHTML = L.filter(d => !seen.has(d.station.uid) && seen.add(d.station.uid)).map(d => {
+    const c = colorOf(d.station);
+    return `<span><span class="swatch${isHourly(d) ? " ring" : ""}" style="background:${c};border-color:${c}"></span>${
+      escHtml(stationLabel(d.station))}<span class="badge ${d.station.src}">${SOURCES[d.station.src].badge}</span></span>`;
+  }).join("");
+}
 
 function renderCards(){
-  const box = $("cards"), live = dataset.filter(d => d.points.length);
-  if (!live.length){
+  const box = $("cards"), pm = focusParam();
+  const L = live().filter(d => d.param === pm);
+  $("cardsMeta").textContent = L.length ? pm : "";
+  if (!L.length){
     box.innerHTML = '<div class="card"><div class="k">狀態</div><div class="v" style="font-size:15px;padding-top:5px">—</div><div class="u">尚無資料</div></div>';
-    $("shareBar").style.display = "none";
+    $("shareBar").style.display = dataset.length ? "flex" : "none";
     return;
   }
-  box.innerHTML = live.map((d,i) => {
-    const last = d.points[d.points.length-1], bd = bandFor(last.value);
+  box.innerHTML = L.map(d => {
+    const last = d.points[d.points.length-1];
     const v = d.points.map(p => p.value).sort((a,b2) => a-b2);
     const med = v[Math.floor(v.length/2)], p95 = v[Math.floor(v.length*0.95)];
+    const isPM = d.param === "PM2.5";
+    const bd = isPM ? bandFor(last.value) : null;
     return `
       <div class="card">
-        <div class="k"><span class="swatch" style="background:${SERIES_COLORS[i]}"></span>${stationLabel(d.station)}</div>
-        <div class="v" style="color:${bd.dark ? "#8A6D0B" : bd.color}">${last.value.toFixed(1)}</div>
-        <div class="u">${d.unit} · ${last.dayKey.slice(5)} ${last.hhmm} · ${bd.label}</div>
+        <div class="k"><span class="swatch" style="background:${colorOf(d.station)}"></span>${escHtml(stationLabel(d.station))}</div>
+        <div class="v"${bd ? ` style="color:${bd.dark ? "#8A6D0B" : bd.color}"` : ""}>${last.value.toFixed(1)}</div>
+        <div class="u">${escHtml(d.unit)} · ${last.dayKey.slice(5)} ${last.hhmm}${bd ? " · " + bd.label : ""}</div>
       </div>
       <div class="card">
         <div class="k">中位數 / P95</div>
         <div class="v">${med.toFixed(1)}<span style="font-size:14px;color:var(--muted)"> / ${p95.toFixed(1)}</span></div>
-        <div class="u">${d.points.length} 筆</div>
+        <div class="u">${d.points.length} 筆 · 每 ${d.cadenceMin < 1 ? d.cadenceMin.toFixed(1) : Math.round(d.cadenceMin)} 分</div>
       </div>`;
   }).join("");
   $("shareBar").style.display = "flex";
   $("shareUrl").value = location.href;
 }
 
-function renderChart(){
-  const svg = $("chart"), W = 900, H = 320, ML = 46, MR = 12, MT = 12, MB = 30;
-  const series = dataset.filter(d => d.points.length);
-  if (!series.length){ svg.innerHTML = ""; $("seriesMeta").textContent = ""; return; }
+function niceCeil(x){
+  if (!isFinite(x) || x <= 0) return 1;
+  const e = Math.pow(10, Math.floor(Math.log10(x)));
+  const m = x/e;
+  return (m <= 1 ? 1 : m <= 2 ? 2 : m <= 5 ? 5 : 10) * e;
+}
 
+const gapMs = d => Math.max(20*60e3, d.cadenceMin*2.5*60e3);
+
+function renderCharts(){
+  const box = $("charts"), L = live();
+  if (!L.length){
+    box.innerHTML = '<p class="hint" style="margin:0">尚無資料。</p>';
+    $("seriesMeta").textContent = "";
+    return;
+  }
+  const params = [...new Set(L.map(d => d.param))].sort((a,b) =>
+    (a === focusParam() ? -1 : b === focusParam() ? 1 : 0) || paramSort(a,b));
+
+  const allPts = L.flatMap(d => d.points);
+  const t0 = Math.min(...allPts.map(p => p.ms)), t1 = Math.max(...allPts.map(p => p.ms));
+
+  box.innerHTML = "";
+  params.forEach((pm, i) => {
+    const series = L.filter(d => d.param === pm);
+    const unit = (series.find(d => d.unit) || {}).unit || "";
+    const srcs = [...new Set(series.map(d => d.station.src))];
+    const wrap = document.createElement("div");
+    wrap.className = "chartwrap";
+    wrap.innerHTML =
+      `<p class="chart-title"><span>${escHtml(pm)}${unit ? ' <em>' + escHtml(unit) + '</em>' : ""}</span>` +
+      `<em>${series.length} 條序列${srcs.length > 1 ? " · 兩個來源疊圖" : ""}</em></p>` +
+      `<div class="chartbox"><svg viewBox="0 0 900 ${i === 0 ? 300 : 220}" role="img" aria-label="${escHtml(pm)} 隨時間變化"></svg>` +
+      `<div class="readout" style="display:none"></div></div>`;
+    box.appendChild(wrap);
+    drawChart(wrap.querySelector("svg"), wrap.querySelector(".readout"), series, t0, t1, i === 0 ? 300 : 220);
+  });
+
+  $("seriesMeta").textContent =
+    `${new Set(L.map(d => d.station.uid)).size} 站 · ${params.length} 測項 · ${
+      (Math.round((t1-t0)/864e5*10)/10)} 天 · ${allPts.length} 點`;
+}
+
+function drawChart(svg, ro, series, t0, t1, H){
+  const W = 900, ML = 48, MR = 12, MT = 12, MB = 28;
   const all = series.flatMap(d => d.points);
-  const t0 = Math.min(...all.map(p => p.ms)), t1 = Math.max(...all.map(p => p.ms));
-  const vMax = Math.max(10, Math.ceil(Math.max(...all.map(p => p.value))*1.12));
+  const vMax = niceCeil(Math.max(...all.map(p => p.value)) * 1.12) || 1;
   const X = ms => ML + (ms-t0)/(t1-t0 || 1)*(W-ML-MR);
-  const Y = v => H - MB - v/vMax*(H-MT-MB);
+  const Y = v  => H - MB - v/vMax*(H-MT-MB);
 
   let out = "";
   for (let i = 0; i <= 4; i++){
     const v = vMax*i/4, y = Y(v);
     out += `<line class="gridline" x1="${ML}" x2="${W-MR}" y1="${y}" y2="${y}"/>`;
-    out += `<text class="axis-lbl" x="${ML-6}" y="${y+3}" text-anchor="end">${v.toFixed(0)}</text>`;
+    out += `<text class="axis-lbl" x="${ML-6}" y="${y+3}" text-anchor="end">${v >= 10 ? v.toFixed(0) : v.toFixed(1)}</text>`;
   }
-  out += `<text class="axis-lbl" x="${ML-6}" y="${MT-1}" text-anchor="end">${series[0].unit}</text>`;
 
-  const d0 = new Date(t0 + 8*3600e3); d0.setUTCHours(0,0,0,0);
-  for (let ms = d0.getTime() - 8*3600e3; ms <= t1; ms += 6*3600e3){
+  const spanD = (t1-t0)/864e5;
+  const stepH = spanD <= 2 ? 6 : spanD <= 5 ? 12 : 24;
+  const d0 = tpe(t0); d0.setUTCHours(0,0,0,0);
+  for (let ms = d0.getTime() - 8*3600e3; ms <= t1; ms += stepH*3600e3){
     if (ms < t0) continue;
-    const dt = new Date(ms + 8*3600e3), mid = dt.getUTCHours() === 0;
+    const dt = tpe(ms), mid = dt.getUTCHours() === 0;
     out += `<line class="gridline${mid ? " day" : ""}" x1="${X(ms)}" x2="${X(ms)}" y1="${MT}" y2="${H-MB}" opacity="${mid ? 1 : .55}"/>`;
     out += `<text class="axis-lbl" x="${X(ms)}" y="${H-MB+14}" text-anchor="middle">${
       mid ? (dt.getUTCMonth()+1)+"/"+dt.getUTCDate() : String(dt.getUTCHours()).padStart(2,"0")}</text>`;
   }
 
-  series.forEach((d,i) => {
+  series.forEach(d => {
+    const c = colorOf(d.station), hourly = isHourly(d), gp = gapMs(d);
     let path = "", pen = false;
     d.points.forEach((p,j) => {
-      const gap = j > 0 && (p.ms - d.points[j-1].ms) > 20*60e3;
+      const gap = j > 0 && (p.ms - d.points[j-1].ms) > gp;
       if (!pen || gap){ path += `M${X(p.ms).toFixed(1)},${Y(p.value).toFixed(1)}`; pen = true; }
       else path += `L${X(p.ms).toFixed(1)},${Y(p.value).toFixed(1)}`;
     });
-    out += `<path d="${path}" fill="none" stroke="${SERIES_COLORS[i]}" stroke-width="1.4" stroke-linejoin="round" opacity=".92"/>`;
+    out += `<path d="${path}" fill="none" stroke="${c}" stroke-width="${hourly ? 1.9 : 1.2}" stroke-linejoin="round" opacity="${hourly ? .95 : .85}"/>`;
+    if (hourly && d.points.length <= 400)
+      out += d.points.map(p =>
+        `<circle cx="${X(p.ms).toFixed(1)}" cy="${Y(p.value).toFixed(1)}" r="2.4" fill="#fff" stroke="${c}" stroke-width="1.4"/>`).join("");
   });
+
   out += `<line x1="${ML}" x2="${W-MR}" y1="${H-MB}" y2="${H-MB}" stroke="#131C1A" stroke-width="1"/>`;
   out += `<line class="cursor" x1="0" x2="0" y1="${MT}" y2="${H-MB}" stroke="#131C1A" stroke-width=".8" opacity="0" stroke-dasharray="3 3"/>`;
   svg.innerHTML = out;
 
-  $("seriesMeta").textContent =
-    `${series.length} 站 · ${(Math.round((t1-t0)/864e5*10)/10)} 天 · ${all.length} 點`;
-
-  const cursor = svg.querySelector(".cursor"), ro = $("readout");
-  svg.onmousemove = ev => {
-    const r = svg.getBoundingClientRect(), px = (ev.clientX - r.left)/r.width*W;
+  const cursor = svg.querySelector(".cursor");
+  const move = ev => {
+    const pt = ev.touches ? ev.touches[0] : ev;
+    const r = svg.getBoundingClientRect(), px = (pt.clientX - r.left)/r.width*W;
     if (px < ML || px > W-MR){ ro.style.display = "none"; cursor.setAttribute("opacity",0); return; }
     const ms = t0 + (px-ML)/(W-ML-MR)*(t1-t0);
     cursor.setAttribute("x1",px); cursor.setAttribute("x2",px); cursor.setAttribute("opacity",.5);
-    const dt = new Date(ms + 8*3600e3);
+    const dt = tpe(ms);
     let html = `<div class="t">${dt.getUTCMonth()+1}/${dt.getUTCDate()} ${
       String(dt.getUTCHours()).padStart(2,"0")}:${String(dt.getUTCMinutes()).padStart(2,"0")}</div>`;
-    series.forEach((d,i) => {
+    series.forEach(d => {
       let best = null, bd = Infinity;
       for (const p of d.points){ const dd = Math.abs(p.ms - ms); if (dd < bd){ bd = dd; best = p; } }
-      html += `<div><span class="swatch" style="background:${SERIES_COLORS[i]}"></span>${
-        best && bd < 15*60e3 ? best.value.toFixed(1) : "—"}</div>`;
+      const tol = Math.max(15*60e3, d.cadenceMin*1.5*60e3);
+      const c = colorOf(d.station);
+      html += `<div><span class="swatch${isHourly(d) ? " ring" : ""}" style="background:${c};border-color:${c}"></span>${
+        best && bd < tol ? best.value.toFixed(1) : "—"}</div>`;
     });
     ro.innerHTML = html; ro.style.display = "block";
   };
-  svg.onmouseleave = () => { ro.style.display = "none"; cursor.setAttribute("opacity",0); };
+  svg.addEventListener("mousemove", move);
+  svg.addEventListener("touchmove", move, {passive:true});
+  const leave = () => { ro.style.display = "none"; cursor.setAttribute("opacity",0); };
+  svg.addEventListener("mouseleave", leave);
+  svg.addEventListener("touchend", leave);
 }
+
+/* ===================== 小時 pattern ===================== */
 
 function hourlyMeans(points){
   const m = new Map();
@@ -695,23 +1099,49 @@ function hourlyMeans(points){
   return m;
 }
 
+/* 低樣本門檻隨取樣頻率變化：3 分鐘序列 <5 筆才算低樣本；小時序列 1 筆就是完整的一小時 */
+function lowN(d){
+  const expect = Math.max(1, Math.round(60 / d.cadenceMin));
+  return Math.min(5, Math.ceil(expect*0.6));
+}
+
+const lerp = (a,b,t) => Math.round(a + (b-a)*t);
+function rampColor(t){
+  t = Math.max(0, Math.min(1, t));
+  const c0 = [234,238,236], c1 = [31,98,85];
+  return `rgb(${lerp(c0[0],c1[0],t)},${lerp(c0[1],c1[1],t)},${lerp(c0[2],c1[2],t)})`;
+}
+
 function renderRaster(){
-  const box = $("raster"), series = dataset.filter(d => d.points.length);
-  if (!series.length){ box.innerHTML = '<p class="hint" style="margin:0">尚無資料。</p>'; return; }
+  const box = $("raster"), pm = focusParam();
+  const L = live().filter(d => d.param === pm);
+  $("rasterMeta").textContent = L.length ? pm + " · 每格 = 該小時平均" : "每格 = 該小時平均";
+  if (!L.length){
+    box.innerHTML = '<p class="hint" style="margin:0">尚無資料。</p>';
+    renderLegend(pm, null);
+    return;
+  }
+  const isPM = pm === "PM2.5";
+  const allV = L.flatMap(d => d.points.map(p => p.value));
+  const scale = {min: Math.min(...allV), max: Math.max(...allV)};
+
   let html = "";
-  series.forEach((d,i) => {
-    const hm = hourlyMeans(d.points);
+  L.forEach((d,i) => {
+    const hm = hourlyMeans(d.points), lim = lowN(d);
     html += `<p style="font-family:var(--mono);font-size:11px;color:var(--ink-2);margin:${i?"16px":"0"} 0 6px">
-      <span class="swatch" style="background:${SERIES_COLORS[i]}"></span>${stationLabel(d.station)} · ${d.param}</p>`;
+      <span class="swatch" style="background:${colorOf(d.station)}"></span>${escHtml(stationLabel(d.station))}
+      <span class="badge ${d.station.src}">${SOURCES[d.station.src].badge}</span> · ${escHtml(d.param)}</p>`;
     for (const dk of [...hm.keys()].sort()){
       const h = hm.get(dk);
       let cells = "";
       for (let hh = 0; hh < 24; hh++){
         const c = h.get(hh);
         if (!c){ cells += `<div class="cell" title="${dk} ${hh}:00 無資料"></div>`; continue; }
-        const mean = c.sum/c.n, bd = bandFor(mean), low = c.n < 5;
-        cells += `<div class="cell" style="background:${bd.color};opacity:${low?.45:1}" title="${dk} ${
-          String(hh).padStart(2,"0")}:00 — ${mean.toFixed(1)} ${d.unit}（${c.n} 筆${low?"，低樣本":""}）"></div>`;
+        const mean = c.sum/c.n, low = c.n < lim;
+        const color = isPM ? bandFor(mean).color : rampColor((mean-scale.min)/((scale.max-scale.min)||1));
+        const tag = isPM ? "（" + bandFor(mean).label + "）" : "";
+        cells += `<div class="cell" style="background:${color};opacity:${low?.45:1}" title="${dk} ${
+          String(hh).padStart(2,"0")}:00 — ${mean.toFixed(1)} ${escHtml(d.unit)}${tag}（${c.n} 筆${low?"，低樣本":""}）"></div>`;
       }
       const wd = ["日","一","二","三","四","五","六"][new Date(dk+"T00:00:00Z").getUTCDay()];
       html += `<div class="raster-row"><div class="raster-lbl">${dk.slice(5)} 週${wd}</div><div class="raster-cells">${cells}</div></div>`;
@@ -720,21 +1150,39 @@ function renderRaster(){
       Array.from({length:24},(_,h) => `<span>${h%3===0?h:""}</span>`).join("")}</div></div>`;
   });
   box.innerHTML = html;
+  renderLegend(pm, scale);
 }
 
-function renderLegend(){
-  $("legend").innerHTML = PM25_BANDS.map(b =>
-    `<div style="background:${b.color};color:${b.dark?"#2A2200":"#fff"}">${b.label} ≤ ${
-      b.max === Infinity ? "∞" : b.max}</div>`).join("");
+function renderLegend(pm, scale){
+  const isPM = (pm || focusParam()) === "PM2.5";
+  if (isPM){
+    $("legend").innerHTML = PM25_BANDS.map(b =>
+      `<div style="background:${b.color};color:${b.dark?"#2A2200":"#fff"}">${b.label} ≤ ${
+        b.max === Infinity ? "∞" : b.max}</div>`).join("");
+    $("rasterHint").innerHTML =
+      "著色採環境部 AQI 的 PM2.5 分段濃度值，但 AQI 正式定義是 <strong>24 小時移動平均</strong>；" +
+      "這裡是小時平均，只能做相對比較，不等同官方 AQI 判定。半透明格＝該小時有效筆數偏低。";
+    return;
+  }
+  const s = scale || {min:0, max:1};
+  $("legend").innerHTML = Array.from({length:6},(_,i) => {
+    const t = i/5, v = s.min + (s.max-s.min)*t;
+    return `<div style="background:${rampColor(t)};color:${t>0.5?"#fff":"#2A2200"}">${v.toFixed(1)}</div>`;
+  }).join("");
+  $("rasterHint").innerHTML =
+    `${escHtml(pm)} 沒有對應的 AQI 分段值，改用單色深淺表示（深＝高），色階範圍 ${s.min.toFixed(1)}–${s.max.toFixed(1)}。` +
+    "AQI 著色只用於 PM2.5。";
 }
 
 function renderTable(){
-  const series = dataset.filter(d => d.points.length);
+  const pm = focusParam();
+  const L = live().filter(d => d.param === pm);
   const tb = $("statTable").querySelector("tbody");
-  if (!series.length){ tb.innerHTML = '<tr><td class="hint" style="border:none">尚無資料。</td></tr>'; return; }
-  let rows = `<tr><th>小時</th>${series.map(d =>
-    `<th>${stationLabel(d.station)}<br><span style="font-weight:400;text-transform:none;letter-spacing:0">平均 / 最大</span></th>`).join("")}</tr>`;
-  const agg = series.map(d => {
+  $("tableMeta").textContent = L.length ? pm + " · 依測站 × 小時" : "依測站 × 小時";
+  if (!L.length){ tb.innerHTML = '<tr><td class="hint" style="border:none">尚無資料。</td></tr>'; return; }
+  let rows = `<tr><th>小時</th>${L.map(d =>
+    `<th>${escHtml(stationLabel(d.station))}<br><span style="font-weight:400;text-transform:none;letter-spacing:0">平均 / 最大 (n)</span></th>`).join("")}</tr>`;
+  const agg = L.map(d => {
     const by = Array.from({length:24},() => ({sum:0,n:0,max:0}));
     for (const p of d.points){ const a = by[p.hour]; a.sum += p.value; a.n++; a.max = Math.max(a.max,p.value); }
     return by;
@@ -742,7 +1190,8 @@ function renderTable(){
   for (let h = 0; h < 24; h++){
     rows += `<tr><td>${String(h).padStart(2,"0")}:00</td>` + agg.map(a => {
       const c = a[h];
-      return `<td>${c.n ? (c.sum/c.n).toFixed(1)+" / "+c.max.toFixed(1) : "—"}</td>`;
+      return `<td>${c.n ? c.sum/c.n < 10 ? (c.sum/c.n).toFixed(2) : (c.sum/c.n).toFixed(1) : "—"}${
+        c.n ? " / " + c.max.toFixed(1) + ` <span style="color:var(--muted)">(${c.n})</span>` : ""}</td>`;
     }).join("") + "</tr>";
   }
   tb.innerHTML = rows;
@@ -751,14 +1200,17 @@ function renderTable(){
 /* ===================== 匯出 / 深連結 ===================== */
 
 function exportCSV(){
-  const rows = [["device_id","station_name","township","lat","lon","param","unit","time_utc","time_taipei","value"]];
+  const rows = [["source","source_label","device_or_station","station_name","city_or_township",
+                 "lat","lon","param","unit","cadence_min","time_utc","time_taipei","value"]];
   for (const d of dataset)
     for (const p of d.points)
-      rows.push([d.station.locationId || d.station.stationID, d.station.name, d.station.township,
-                 d.station.lat, d.station.lon, d.param, d.unit,
+      rows.push([d.station.src, SOURCES[d.station.src].label,
+                 d.station.locationId || d.station.stationID || d.station.name,
+                 stationLabel(d.station), d.station.township || d.station.city,
+                 d.station.lat, d.station.lon, d.param, d.unit, Math.round(d.cadenceMin),
                  new Date(p.ms).toISOString(),
                  new Date(p.ms + 8*3600e3).toISOString().replace("T"," ").slice(0,19), p.value]);
-  const csv = "\uFEFF" + rows.map(r => r.map(c => `"${String(c).replace(/"/g,'""')}"`).join(",")).join("\n");
+  const csv = "﻿" + rows.map(r => r.map(c => `"${String(c).replace(/"/g,'""')}"`).join(",")).join("\n");
   const a = document.createElement("a");
   a.href = URL.createObjectURL(new Blob([csv],{type:"text/csv;charset=utf-8"}));
   a.download = "air_observations_" + $("endDate").value + ".csv";
@@ -766,11 +1218,13 @@ function exportCSV(){
 }
 
 function syncHash(){
-  const ids = picked.map(s => s.locationId || s.stationID).filter(Boolean);
   const p = new URLSearchParams();
-  if (ids.length) p.set("device", ids.join(","));
+  const ids = picked.map(s => s.src + ":" + stationKey(s)).filter(Boolean);
+  if (ids.length) p.set("dev", ids.join(","));
+  if (selectedParams.size) p.set("params", [...selectedParams].join(","));
   p.set("days", $("days").value);
   if ($("endDate").value) p.set("end", $("endDate").value);
+  if ($("focusParam").value) p.set("focus", $("focusParam").value);
   history.replaceState(null, "", "#" + p.toString());
   if ($("shareUrl")) $("shareUrl").value = location.href;
 }
@@ -779,32 +1233,71 @@ async function loadFromHash(){
   const p = new URLSearchParams(location.hash.slice(1));
   if (p.get("end")) $("endDate").value = p.get("end");
   if (p.get("days")) $("days").value = p.get("days");
-  const ids = (p.get("device") || "").split(",").map(s => s.trim()).filter(Boolean);
-  if (!ids.length) return;
-  for (const id of ids.slice(0, MAX_STATIONS)) await addDevice(id);
+  if (p.get("params")){
+    selectedParams = new Set(p.get("params").split(",").map(s => s.trim()).filter(Boolean));
+    if (!selectedParams.size) selectedParams.add("PM2.5");
+    renderParams();
+  }
+  // dev=iot:xxx,epa:板橋；舊格式 device=xxx 一律視為微型感測器
+  const raw = p.get("dev") || p.get("device") || "";
+  const items = raw.split(",").map(s => s.trim()).filter(Boolean);
+  if (!items.length) return;
+  for (const it of items.slice(0, MAX_STATIONS)){
+    const m = it.match(/^(iot|epa):(.*)$/);
+    await addDevice(m ? m[2] : it, m ? m[1] : "iot");
+  }
+  if (p.get("focus")){
+    const fp = $("focusParam");
+    if ([...fp.options].some(o => o.value === p.get("focus"))) fp.value = p.get("focus");
+  }
   if (picked.length) loadObservations();
+}
+
+/* ===================== 來源切換 ===================== */
+
+function setSource(src){
+  curSrc = src;
+  const cfg = SOURCES[src];
+  $("tabIot").classList.toggle("on", src === "iot");
+  $("tabEpa").classList.toggle("on", src === "epa");
+  $("tabIot").setAttribute("aria-pressed", String(src === "iot"));
+  $("tabEpa").setAttribute("aria-pressed", String(src === "epa"));
+  $("inputLabel").textContent = cfg.inputLabel;
+  $("deviceInput").placeholder = cfg.placeholder;
+  $("addHint").innerHTML = cfg.hint;
+  $("listEpaBtn").style.display = src === "epa" ? "" : "none";
+  $("browseList").innerHTML = "";
 }
 
 /* ===================== 啟動 ===================== */
 
 (function init(){
   $("endDate").value = new Date(Date.now() + 8*3600e3).toISOString().slice(0,10);
+  setSource("iot");
+  renderParams();
+  renderLegend("PM2.5", null);
 
+  $("tabIot").addEventListener("click", () => setSource("iot"));
+  $("tabEpa").addEventListener("click", () => setSource("epa"));
   $("addBtn").addEventListener("click", () => addDevice($("deviceInput").value));
   $("deviceInput").addEventListener("keydown", e => { if (e.key === "Enter") addDevice(e.target.value); });
-  $("demoBtn").addEventListener("click", () => { $("deviceInput").value = DEMO_ID; addDevice(DEMO_ID); });
+  $("demoBtn").addEventListener("click", () => {
+    const q = SOURCES[curSrc].demo;
+    $("deviceInput").value = q; addDevice(q);
+  });
+  $("listEpaBtn").addEventListener("click", listEpaStations);
   $("findBtn").addEventListener("click", findNearby);
   $("loadBtn").addEventListener("click", loadObservations);
   $("csvBtn").addEventListener("click", exportCSV);
-  $("days").addEventListener("change", syncHash);
+  $("days").addEventListener("change", () => { syncHash(); updateLoadHint(); });
   $("endDate").addEventListener("change", syncHash);
+  $("focusParam").addEventListener("change", () => { syncHash(); render(); });
   $("copyBtn").addEventListener("click", () => {
     navigator.clipboard.writeText(location.href)
       .then(() => setStatus("連結已複製。"))
       .catch(() => { $("shareUrl").select(); });
   });
 
-  renderLegend();
   loadFromHash();
 })();
 </script>
