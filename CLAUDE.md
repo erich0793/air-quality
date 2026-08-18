@@ -25,7 +25,9 @@
 部署目標：GitHub Pages（純靜態，無 build step）。
 
 **驗證狀態**：微型感測器路線由使用者在真實瀏覽器實測可用（裝置編號 `13580653094`）。
-國家空品測站路線與分頁修正只在 Chromium + 合成 STA 回應下驗證過（見下方「未驗證」），**尚未打過真實的國家測站 API**。
+國家空品測站路線與分頁修正只在 Chromium + 合成 STA 回應下驗證過（見下方「未驗證」），**尚未打過真實的國家測站 API**，
+且該 endpoint 本身是**高風險假設**（見下方專節）。「來源間偏差」面板有已知的方法學問題，
+**在「下一輪必修」處理完之前，那個面板的數字不得用於任何結論**。
 
 ---
 
@@ -36,7 +38,7 @@
 | 項目 | 值 |
 |---|---|
 | 微型感測器 endpoint | `https://sta.colife.org.tw/STA_AirQuality_EPAIoT/v1.0/`（鏡像：`https://sta.ci.taiwan.gov.tw/STA_AirQuality_EPAIoT/v1.0/`） |
-| 國家空品測站 endpoint | `https://sta.ci.taiwan.gov.tw/STA_AirQuality_v2/v1.0/`，同一服務內以 `properties/authority` 區分：`行政院環境保護署`＝國家測站、`中研院`＝校園微型感測器。**來源：官方套件 pyCIOT 1.1.0 的 `data_source.json`**，尚未對真實 API 實測 |
+| 國家空品測站 endpoint | **不在這張表裡——這是高風險假設，見下一節。** |
 | 協定 | OGC SensorThings API v1.0 |
 | API key | **不需要** |
 | 資料集（微型） | 環境部「智慧城鄉空品微型感測器」，約 10,999 點，更新頻率 3 分鐘，2017 年 6 月起 |
@@ -51,6 +53,28 @@
 | 字串包含 | 伺服器為 FROST，支援 `substringof('x',name)`；OData 4 的 `contains()` 亦一併嘗試 |
 | 批次歷史下載 | <https://history.colife.org.tw>（大量歷史資料走這裡比逐筆 API 有效率） |
 | 其他來源（備查） | 科技部智慧園區 `STA_AirQuality_MOST/v1.0/`、暨大在地感測器 `STA_AirQuality_Local/v1.0/`（同樣出自 pyCIOT 設定） |
+
+---
+
+## 高風險假設（未經證實，且有明確的過期跡象）
+
+### 國家空品測站的 endpoint
+
+程式碼目前預設 `https://sta.ci.taiwan.gov.tw/STA_AirQuality_v2/v1.0/`，並以
+`properties/authority` 區分 `行政院環境保護署`＝國家測站、`中研院`＝校園微型感測器。
+
+**這是猜的，不是事實。** 唯一依據是官方套件 pyCIOT 1.1.0 的 `data_source.json`。
+而那份設定檔裡 `authority` 仍寫「行政院環境保護署」——環保署已於 2023 年 8 月改制為**環境部**，
+代表該設定檔至少兩年沒更新過。一份兩年沒更新的設定檔，裡面的 endpoint 同樣可能已經遷移、
+改版或停用。
+
+因此在使用者提供實測確認的 endpoint 之前：
+
+- **不得把這個 endpoint 當成已知事實**，也不得以它為前提再往下推論（例如「因為 v2 收錄兩種來源，所以…」）。
+- `index.html` 裡它只是一個**可覆寫的預設值**，UI 上的 endpoint 欄位就是為此保留的。
+- 任何說明文字（README、UI、commit message）提到它時都要標明未經實測。
+- 拿到正確 endpoint 後：更新這一節、把它移進「已驗證的事實」、同步 README 與 `worker.js` 白名單，
+  並重新檢視下面第 2、3 項是否還成立。
 
 ---
 
@@ -81,8 +105,51 @@
 5. **Datastream 清單** — 兩個來源各有哪些測項、`name` 字串長什麼樣（`PM2.5`／`O3`／`RH`／`AMB_TEMP`…）？
    程式碼是加入測站後動態讀取後產生勾選清單，但沒看過真實回應。
 
-6. **7 天只出現 1 天的成因** — 已針對兩個可能成因修掉（見下方「分頁」），但沒能對真實伺服器覆核是哪一個。
-   實測時請看狀態列有沒有「N 頁抓取失敗」或「實際只涵蓋 X 天」。
+6. **7 天只出現 1 天的成因** — **三個候選成因，尚未確認是哪一個（也可能都不是）**：
+
+   | | 成因 | 現況 |
+   |---|---|---|
+   | A | 分頁請求被來源站限流（429／5xx），失敗的頁被靜默丟掉 | 已改成重試＋失敗計數，狀態列會出現「N 頁抓取失敗」 |
+   | B | 伺服器沒回 `@iot.count`，程式只取到第一頁 100 筆 | 已改成改跟 `@iot.nextLink` 逐頁走 |
+   | C | **STA endpoint 只保留近期觀測值，較舊的資料只在 <https://history.colife.org.tw>** | **完全沒處理，程式碼目前假設 STA 有完整歷史** |
+
+   A、B 是「修掉了但沒覆核」，C 是**還沒驗證也還沒處理**的可能性。
+   如果 C 成立，那麼不管分頁寫得多好，超過保留期的區間都不會有資料，
+   長區間必須改走 history 的批次下載，或在 UI 上明講可查詢的時間範圍。
+
+   **判別方式**（直接問該 datastream 最舊與最新的一筆）：
+
+```bash
+   BASE=https://sta.colife.org.tw/STA_AirQuality_EPAIoT/v1.0
+   Q=13580653094        # 裝置編號（stationID）
+
+   # 1) 由裝置編號取得 Thing id
+   TID=$(curl -sG "$BASE/Things" \
+     --data-urlencode "\$filter=properties/stationID eq '$Q'" | jq -r '.value[0]["@iot.id"]')
+
+   # 2) 取得 PM2.5 的 datastream id
+   DS=$(curl -sG "$BASE/Things($TID)/Datastreams" \
+     --data-urlencode "\$filter=name eq 'PM2.5'" | jq -r '.value[0]["@iot.id"]')
+
+   # 3) 最舊的一筆、最新的一筆、總筆數
+   curl -sG "$BASE/Datastreams($DS)/Observations" \
+     --data-urlencode "\$orderby=phenomenonTime asc"  --data-urlencode "\$top=1" \
+     --data-urlencode "\$select=phenomenonTime" | jq -r '.value[0].phenomenonTime'
+   curl -sG "$BASE/Datastreams($DS)/Observations" \
+     --data-urlencode "\$orderby=phenomenonTime desc" --data-urlencode "\$top=1" \
+     --data-urlencode "\$select=phenomenonTime" | jq -r '.value[0].phenomenonTime'
+   curl -sG "$BASE/Datastreams($DS)/Observations" \
+     --data-urlencode "\$count=true" --data-urlencode "\$top=1" | jq -r '.["@iot.count"]'
+```
+
+   判讀：
+
+   - 最舊一筆只到**幾天前**（總筆數也只有幾千）→ **成因 C 成立**：STA 只留近期資料。
+     此時要嘛把可選天數限制在保留期內，要嘛長區間改走 history.colife.org.tw。
+   - 最舊一筆是 **2017 年附近、總筆數上百萬** → C 不成立，回頭看狀態列：
+     有「N 頁抓取失敗」＝成因 A；沒有失敗卻只拿到 100 筆＝成因 B。
+   - 國家測站要一併測的話，把 `BASE` 換成國家測站 endpoint、`Q` 換成 stationID 再跑一次
+     （但那個 endpoint 本身還是高風險假設，見上一節）。
 
 **確認完請把結果寫回這份 CLAUDE.md，把項目從「未驗證」移到「已驗證」。**
 
@@ -102,6 +169,8 @@
 3. **微型感測器 ≠ 法規等級數據**。多為光散射法，環境部明示不宜直接比對空氣品質標準。
    UI 上必須保留這項說明，不得為了版面精簡而刪除。高濕度下對 PM2.5 有正偏誤。
    **兩個來源疊圖是為了看偏差方向與時間結構，不是校正**，也不可逐點相減（時間解析度不同）。
+   **兩個測點不是 co-location**（實測配置相距約 2 km），因此兩者的差值不等於儀器偏差，
+   不得稱為 bias，也不得作為校正依據——詳見下方「下一輪必修」。
 
 4. **AQI 的定義是 24 小時移動平均**。目前用 AQI 的 PM2.5 分段濃度值來著色小時平均，
    這是刻意的近似，UI 必須明白標示兩者不等價。不得把小時平均直接稱為 AQI。
@@ -118,6 +187,44 @@
 
 7. **介面文字一律正體中文**，專業／技術名詞保留英文（PM2.5、SensorThings API、CORS、proxy 等）。
    不得出現簡體字。
+
+---
+
+## 下一輪必修：「來源間偏差」面板的方法學問題
+
+現行 `renderBias()`／`blandAltman()`／`rhStrata()` 有以下問題，**在修好之前，這個面板的數字
+不得用於任何結論，也不得寫進報告**。使用者（醫學／流行病學背景）已逐項指出：
+
+1. **非 co-location，不能叫 bias。** 使用者實測的兩個測點相距約 2 km。
+   兩者的差值同時混合了「儀器／方法差異」與「真實的空間濃度梯度」，兩者無法用現有資料拆開。
+   → 面板名稱與所有欄位改為**「兩測點差異」**（difference between sites），
+   移除 `bias` 字樣；並明寫**不可作為校正依據**。
+   若日後真的做 co-location（兩機並置），才可以重新談儀器偏差。
+
+2. **95% CI 低估。** 逐時 PM2.5 有強烈自相關，現行 `mean ± 1.96·SD/√n` 把 n 當成獨立樣本數，
+   信賴區間必然過窄。→ 改以**「日」為 block 的 block bootstrap**（重抽整天，保留日內相關結構）
+   估計差異平均值的 CI；報告時說明重抽次數與 block 定義。
+
+3. **樣本量門檻改以天數計。** 現行 `n < 24` 才示警，是把小時數當樣本數。
+   有效獨立樣本接近「天數」而非「小時數」。→ 門檻改為天數（例如 < 7 天即標示證據薄弱），
+   UI 上同時顯示涵蓋天數與配對小時數。
+
+4. **Pearson r 不是一致性指標。** r 衡量的是線性相關，兩台儀器可以 r = 0.99 卻系統性差一倍。
+   與 Bland–Altman 並列會讓讀者誤以為 r 高＝一致。
+   → **移除**，或保留但明確標註「相關性 ≠ 一致性，僅供參考」。傾向直接移除。
+
+5. **固定 ±1.96SD 的 LoA 可能不適用。** 若差值的離散度隨濃度放大（heteroscedasticity，PM2.5 常見），
+   固定寬度的一致性界限在低濃度過寬、高濃度過窄。
+   → 先檢查差值 vs 平均值的散布是否有喇叭狀；若有，改用 **log 轉換後的 LoA**（結果以比值呈現）
+   或 **回歸式 LoA**（差值與 SD 皆對濃度做迴歸）。UI 要標明用的是哪一種。
+
+6. **確認 Bland–Altman 的 x 軸。** 現行 `blandAltman()` 的 x 軸**確實是 (微型 + 國家)/2**
+   （`xs = pairs.map(p => (p.micro + p.nat)/2)`），y 軸是 `micro − nat`，符合標準 BA 圖。
+   但要注意：**當其中一方是參考標準時**（國家測站經品保程序），Krouwer 建議 x 軸改用
+   **參考值本身**而非兩者平均，否則參考值的誤差會同時進入 x 與 y 而造成人工相關。
+   本專案的情況介於兩者之間（國家測站是參考級但非同址），修的時候要一併決定並在 UI 標明。
+
+**做這一輪時請一併重讀原則 3。** 面板改名後，README 與 UI 文案也要同步。
 
 ---
 
@@ -146,18 +253,19 @@
 
 ## 待辦（依優先序）
 
-1. **實測 CORS**（兩台主機都要），依結果決定是否部署 `worker.js`，並更新 README 與 worker 白名單。
-2. **實測國家空品測站**：用「板橋」走一次完整流程，覆核上方未驗證項目 2–5。
-3. ~~平日 vs 假日、尖峰 vs 離峰的分層統計~~ — 已做（「分層統計」面板，`renderStrat()`）。
+1. **修「來源間偏差」面板的方法學問題** — 見上方「下一輪必修」六項。這是目前最高優先，
+   因為那個面板現在會產出看起來可信、實際上有誤導性的數字。
+2. **取得並確認國家空品測站的正確 endpoint**（使用者提供），解除上方「高風險假設」。
+3. **實測 CORS**（兩台主機都要），依結果決定是否部署 `worker.js`，並更新 README 與 worker 白名單。
+4. **釐清 7 天問題的真因**（成因 A／B／C，判別 curl 見上方未驗證第 6 項）。
+   若成因 C 成立，要規劃 history.colife.org.tw 路線或限制可選天數。
+5. ~~平日 vs 假日、尖峰 vs 離峰的分層統計~~ — 已做（「分層統計」面板，`renderStrat()`）。
    統計單位是小時平均，`n` ＝有效小時數；尖峰＝台灣時間 07–09／17–19；
    **假日只認週六日，國定假日與補班日尚未納入**（要做得先內建假日表，或改抓行政院行事曆）。
-4. ~~微型 vs 國家測站的偏差量化~~ — 已做（「來源間偏差」面板，`renderBias()`）：
-   配對小時數、bias 與其 95% CI、MAE、RMSE、Pearson r、Bland–Altman 圖與一致性界限，
-   並用該微型感測器自身的 RH 做三段濕度分層。**只在合成資料下驗證過數值正確性**。
-   還可以再補：Spearman、依季節／溫度分層、以及 bias 隨濃度變化的迴歸（proportional bias）。
-5. **長期資料累積**：目前每次都重新打 API。可考慮把抓過的觀測值寫入 Supabase（使用者已有帳號），
+   注意：這個面板的 `n` 同樣有自相關問題（同「下一輪必修」第 2、3 項），做那一輪時一併檢視。
+6. **長期資料累積**：目前每次都重新打 API。可考慮把抓過的觀測值寫入 Supabase（使用者已有帳號），
    歷史資料不變動故可永久快取；累積數月後才有足夠樣本做 diurnal pattern 的統計檢定。
-6. 無障礙檢查：鍵盤 focus 可見（已加 `:focus-visible`）、`prefers-reduced-motion`（已加）、
+7. 無障礙檢查：鍵盤 focus 可見（已加 `:focus-visible`）、`prefers-reduced-motion`（已加）、
    圖表的文字替代（目前只有 `aria-label`，可考慮補一段統計摘要）。
 
 ---

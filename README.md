@@ -120,6 +120,10 @@ TW040203A0506884     ← TW 開頭，對應 properties/locationId
 > **這是偏差的描述，不是校正。** 兩者量測原理不同（光散射 vs 法規等級儀器），
 > Bland–Altman 只描述兩個方法的一致程度，不能判定哪一邊「對」，
 > 也不該拿 bias 去回頭修正原始曲線。
+>
+> ⚠️ **這個面板目前有已知的方法學問題，數字不要拿去下結論。** 兩個測點若不是並置（co-location），
+> 差值同時混合了儀器差異與真實的空間濃度梯度，不能稱為 bias；逐時 PM2.5 的自相關也會讓 95% CI 過窄；
+> Pearson r 不是一致性指標。修正項目列在 `CLAUDE.md` 的「下一輪必修」。
 
 ---
 
@@ -173,6 +177,8 @@ Worker 內建網域允許清單（只轉發 `sta.colife.org.tw`、`sta.ci.taiwan
 - **民生公共物聯網資料服務平台** — <https://ci.taiwan.gov.tw/dsp/Views/dataset/air.aspx>
 - 微型感測器：環境部「智慧城鄉空品微型感測器」— `https://sta.colife.org.tw/STA_AirQuality_EPAIoT/v1.0/`
 - 國家測站：環境部「國家空品測站」— `https://sta.ci.taiwan.gov.tw/STA_AirQuality_v2/v1.0/`
+  （⚠️ **這個 endpoint 尚未實測確認**，僅出自官方套件 pyCIOT 1.1.0 的設定檔，而該設定檔的
+  `authority` 仍寫改制前的「行政院環境保護署」，顯示至少兩年未更新。網站上的 endpoint 欄位可自行覆寫。）
 - 介接：OGC SensorThings API v1.0，免 API key
 - 授權：政府資料開放授權條款第 1 版
 - 大批量歷史資料另有批次下載入口：<https://history.colife.org.tw>
