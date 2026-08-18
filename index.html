@@ -299,6 +299,22 @@
         <p class="panel-title">小時統計 <span class="count" id="tableMeta">依測站 × 小時</span></p>
         <div class="tablescroll"><table id="statTable"><tbody><tr><td class="hint" style="border:none">尚無資料。</td></tr></tbody></table></div>
       </section>
+
+      <section class="panel">
+        <p class="panel-title">分層統計 <span class="count" id="stratMeta">平日／假日 × 尖峰／離峰</span></p>
+        <div id="strat"><p class="hint" style="margin:0">尚無資料。</p></div>
+        <p class="hint">
+          統計單位是<strong>小時平均</strong>（兩個來源時間解析度不同，先降頻成小時才可比），
+          <code>n</code> ＝有效小時數，不是原始筆數；有效筆數不足的小時整格排除，不補值。
+          尖峰定義為台灣時間 07–09 與 17–19 時。
+          <strong>假日只認週六日，未納入國定假日與補班日</strong>，跨年節的區間要自行判讀。
+        </p>
+      </section>
+
+      <section class="panel">
+        <p class="panel-title">來源間偏差 <span class="count" id="biasMeta"></span></p>
+        <div id="bias"><p class="hint" style="margin:0">同時加入一個國家空品測站與至少一個微型感測器，並讓兩者有共同測項，才會出現配對統計。</p></div>
+      </section>
     </div>
   </div>
 
@@ -311,6 +327,7 @@
       <li><strong>分頁</strong>：SensorThings API 單頁上限 100 筆。本頁先以 <code>$count=true</code> 取總筆數再用 <code>$skip</code> 併發取回（上限 4）；若伺服器未回 <code>@iot.count</code>，改為逐頁跟隨 <code>@iot.nextLink</code>。單頁失敗會自動重試（僅對 429／5xx），仍失敗則計數並在狀態列標示「資料不完整」——不會靜默略過。</li>
       <li><strong>兩個來源的可比性</strong>：國家測站是法規等級儀器（β 射線／震盪天平等）並經品保程序，微型感測器多為光散射法，靈敏度與準確度不同，環境部明示微型感測器數據不宜直接比對空氣品質標準，只適合觀察<strong>相對趨勢與時間 pattern</strong>；高濕度下光散射法對 PM2.5 常有正偏誤。兩者疊圖的用途是看偏差方向與時間結構，不是校正。</li>
       <li><strong>缺值</strong>：不內插、不填補。中斷處直接斷線（斷線門檻＝該序列取樣間隔中位數的 2.5 倍，微型感測器至少 20 分鐘）。小時有效筆數不足（3 分鐘序列 &lt; 5 筆）標記為低樣本（半透明）；小時值序列本來每小時就只有 1 筆，不套用此標記。</li>
+      <li><strong>分層與偏差量化</strong>：分層統計與來源間偏差一律以<strong>小時平均</strong>為單位（兩個來源時間解析度不同，先降頻成小時才可比），<code>n</code> 是有效小時數；有效筆數不足的小時整格排除，不以任何方式補值。尖峰定義為台灣時間 07–09 與 17–19 時；假日只認週六日，<strong>未納入國定假日與補班日</strong>。Bland–Altman 只描述兩個方法的一致程度，不判定何者正確，bias 也不得回頭用來校正原始曲線。濕度分層使用該微型感測器自身的 RH。</li>
       <li><strong>用途</strong>：個人資料探索工具，非法規依據。若要引用於論文或正式報告，應改用國家測站經品保程序後的數據，並註明資料擷取日期。</li>
     </ol>
   </section>
@@ -928,7 +945,7 @@ async function loadObservations(){
 
 /* ===================== 繪圖 ===================== */
 
-function render(){ renderKey(); renderCards(); renderCharts(); renderRaster(); renderTable(); }
+function render(){ renderKey(); renderCards(); renderCharts(); renderRaster(); renderTable(); renderStrat(); renderBias(); }
 
 const live = () => dataset.filter(d => d.points.length);
 
@@ -1195,6 +1212,232 @@ function renderTable(){
     }).join("") + "</tr>";
   }
   tb.innerHTML = rows;
+}
+
+/* ===================== 分層統計與來源間偏差 ===================== */
+
+function quantile(sorted, q){
+  if (!sorted.length) return NaN;
+  const i = (sorted.length-1)*q, lo = Math.floor(i), hi = Math.ceil(i);
+  return lo === hi ? sorted[lo] : sorted[lo] + (sorted[hi]-sorted[lo])*(i-lo);
+}
+
+function describe(vals){
+  const n = vals.length;
+  if (!n) return {n:0};
+  const s = vals.slice().sort((a,b) => a-b);
+  const mean = vals.reduce((a,b) => a+b, 0)/n;
+  const sd = n > 1 ? Math.sqrt(vals.reduce((a,b) => a + (b-mean)**2, 0)/(n-1)) : NaN;
+  return {n, mean, sd, med: quantile(s,.5), p25: quantile(s,.25), p75: quantile(s,.75)};
+}
+
+function pearson(xs, ys){
+  const n = xs.length;
+  if (n < 3) return NaN;
+  const mx = xs.reduce((a,b)=>a+b,0)/n, my = ys.reduce((a,b)=>a+b,0)/n;
+  let sxy = 0, sxx = 0, syy = 0;
+  for (let i = 0; i < n; i++){
+    const dx = xs[i]-mx, dy = ys[i]-my;
+    sxy += dx*dy; sxx += dx*dx; syy += dy*dy;
+  }
+  return (sxx && syy) ? sxy/Math.sqrt(sxx*syy) : NaN;
+}
+
+const fmt = (v, d) => Number.isFinite(v) ? v.toFixed(d === undefined ? 1 : d) : "—";
+
+/* 把序列降頻成「台灣時間整點」的小時平均。
+   這是統計處理，不是內插：有效筆數不足的小時整格排除，缺的小時就是沒有。 */
+function hourlyMap(d){
+  const lim = lowN(d), raw = new Map();
+  for (const p of d.points){
+    const hk = Math.floor((p.ms + 8*3600e3)/3600e3)*3600e3 - 8*3600e3;
+    const c = raw.get(hk) || {sum:0, n:0};
+    c.sum += p.value; c.n++; raw.set(hk, c);
+  }
+  const map = new Map();
+  for (const [k,c] of raw) if (c.n >= lim) map.set(k, c.sum/c.n);
+  return {map, dropped: raw.size - map.size};
+}
+
+function hourInfo(hk){
+  const t = tpe(hk), h = t.getUTCHours(), wd = t.getUTCDay();
+  return {hour:h, weekend: wd === 0 || wd === 6, peak: (h >= 7 && h < 10) || (h >= 17 && h < 20)};
+}
+
+function renderStrat(){
+  const box = $("strat"), pm = focusParam();
+  const L = live().filter(d => d.param === pm);
+  $("stratMeta").textContent = L.length ? pm + " · 平日／假日 × 尖峰／離峰" : "平日／假日 × 尖峰／離峰";
+  if (!L.length){ box.innerHTML = '<p class="hint" style="margin:0">尚無資料。</p>'; return; }
+
+  const strata = [
+    {k:"all",  label:"全部",        f:()=>true},
+    {k:"wd_p", label:"平日 · 尖峰", f:i=>!i.weekend && i.peak},
+    {k:"wd_o", label:"平日 · 離峰", f:i=>!i.weekend && !i.peak},
+    {k:"we_p", label:"假日 · 尖峰", f:i=> i.weekend && i.peak},
+    {k:"we_o", label:"假日 · 離峰", f:i=> i.weekend && !i.peak}
+  ];
+
+  box.innerHTML = L.map(d => {
+    const {map, dropped} = hourlyMap(d);
+    const hours = [...map.entries()].map(([hk,v]) => ({info: hourInfo(hk), v}));
+    const rows = strata.map(s => {
+      const st = describe(hours.filter(h => s.f(h.info)).map(h => h.v));
+      return `<tr><td>${s.label}</td><td>${st.n}</td><td>${fmt(st.mean)}</td><td>${fmt(st.sd)}</td>` +
+             `<td>${fmt(st.med)}</td><td>${st.n ? fmt(st.p25)+"–"+fmt(st.p75) : "—"}</td></tr>`;
+    }).join("");
+    return `<p style="font-family:var(--mono);font-size:11px;color:var(--ink-2);margin:14px 0 4px">
+        <span class="swatch" style="background:${colorOf(d.station)}"></span>${escHtml(stationLabel(d.station))}
+        <span class="badge ${d.station.src}">${SOURCES[d.station.src].badge}</span> · ${escHtml(d.param)} ${escHtml(d.unit)}
+        ${dropped ? `<span style="color:var(--warn)"> · 排除 ${dropped} 個低樣本小時</span>` : ""}</p>
+      <table><tbody>
+        <tr><th>分層</th><th>n（小時）</th><th>平均</th><th>SD</th><th>中位數</th><th>IQR</th></tr>
+        ${rows}
+      </tbody></table>`;
+  }).join("");
+}
+
+function renderBias(){
+  const box = $("bias"), pm = focusParam();
+  const L = live().filter(d => d.param === pm);
+  const iot = L.filter(d => d.station.src === "iot");
+  const epa = L.filter(d => d.station.src === "epa");
+  $("biasMeta").textContent = "";
+
+  if (!iot.length || !epa.length){
+    box.innerHTML = '<p class="hint" style="margin:0">同時加入一個國家空品測站與至少一個微型感測器，' +
+      '並讓兩者有共同測項（重點測項目前是 ' + escHtml(pm) + '），才會出現配對統計。</p>';
+    return;
+  }
+  $("biasMeta").textContent = pm + " · 微型 − 國家測站";
+
+  let html = "";
+  for (const ref of epa){
+    for (const d of iot){
+      const A = hourlyMap(d), B = hourlyMap(ref);
+      const pairs = [];
+      for (const [k,v] of A.map) if (B.map.has(k)) pairs.push({hk:k, micro:v, nat:B.map.get(k)});
+      pairs.sort((a,b) => a.hk - b.hk);
+
+      const head = `<p style="font-family:var(--mono);font-size:11px;color:var(--ink-2);margin:16px 0 4px">
+        <span class="swatch" style="background:${colorOf(d.station)}"></span>${escHtml(stationLabel(d.station))}
+        <span class="badge iot">微型</span> vs
+        <span class="swatch" style="background:${colorOf(ref.station)};margin-left:4px"></span>${escHtml(stationLabel(ref.station))}
+        <span class="badge epa">國站</span></p>`;
+
+      if (pairs.length < 3){
+        html += head + `<p class="hint" style="margin:0">配對到的小時只有 ${pairs.length} 個，不足以計算偏差統計。</p>`;
+        continue;
+      }
+
+      const diffs = pairs.map(p => p.micro - p.nat);
+      const st = describe(diffs);
+      const se = st.sd/Math.sqrt(st.n);
+      const loLo = st.mean - 1.96*st.sd, loHi = st.mean + 1.96*st.sd;
+      const mae = diffs.reduce((a,b) => a + Math.abs(b), 0)/st.n;
+      const rmse = Math.sqrt(diffs.reduce((a,b) => a + b*b, 0)/st.n);
+      const r = pearson(pairs.map(p => p.micro), pairs.map(p => p.nat));
+      const natMean = describe(pairs.map(p => p.nat)).mean;
+
+      html += head +
+        `<table><tbody>
+          <tr><th>配對小時 n</th><th>bias（微型−國家）</th><th>bias 95% CI</th><th>MAE</th><th>RMSE</th><th>Pearson r</th></tr>
+          <tr><td>${st.n}</td><td>${st.mean >= 0 ? "+" : ""}${fmt(st.mean)} ${escHtml(d.unit)}（相對 ${
+            fmt(st.mean/natMean*100, 0)}%）</td><td>${fmt(st.mean-1.96*se)} – ${fmt(st.mean+1.96*se)}</td>
+            <td>${fmt(mae)}</td><td>${fmt(rmse)}</td><td>${fmt(r, 3)}</td></tr>
+          <tr><th>差值 SD</th><th colspan="2">Bland–Altman 一致性界限（bias ± 1.96 SD）</th><th colspan="3">配對涵蓋</th></tr>
+          <tr><td>${fmt(st.sd)}</td><td colspan="2">${fmt(loLo)} – ${fmt(loHi)} ${escHtml(d.unit)}</td>
+            <td colspan="3">${new Date(pairs[0].hk + 8*3600e3).toISOString().slice(5,16).replace("T"," ")} ～ ${
+              new Date(pairs[pairs.length-1].hk + 8*3600e3).toISOString().slice(5,16).replace("T"," ")}
+              ${A.dropped ? "· 微型排除 " + A.dropped + " 低樣本小時" : ""}</td></tr>
+        </tbody></table>` +
+        blandAltman(pairs, d, ref) +
+        rhStrata(pairs, d);
+
+      if (st.n < 24)
+        html += `<p class="hint" style="color:var(--warn);margin-top:4px">配對小時只有 ${st.n} 個，
+          一致性界限與相關係數的不確定性很大，別當定論。</p>`;
+    }
+  }
+
+  html += `<p class="hint" style="margin-top:14px">
+    配對方式：微型感測器先降頻成台灣時間的<strong>小時平均</strong>（有效筆數不足的小時整格排除），
+    再與國家測站同一小時的值配對；不做內插、不做時間位移。
+    <strong>這是偏差的描述，不是校正</strong>——兩者量測原理不同（光散射 vs 法規等級儀器），
+    Bland–Altman 只描述兩個方法的一致程度，不能用來判定哪一邊「對」，也不得拿 bias 去回頭修正原始曲線。
+    正偏誤在高濕度時尤其常見，若同時載入 RH 會自動做濕度分層。</p>`;
+  box.innerHTML = html;
+}
+
+/* Bland–Altman：x = 兩者平均，y = 差值 */
+function blandAltman(pairs, d, ref){
+  const W = 900, H = 240, ML = 52, MR = 14, MT = 12, MB = 30;
+  const xs = pairs.map(p => (p.micro + p.nat)/2), ys = pairs.map(p => p.micro - p.nat);
+  const st = describe(ys);
+  const x0 = Math.min(...xs), x1 = Math.max(...xs);
+  // y 軸涵蓋所有差值、兩條一致性界限與 0，不做對稱以免浪費半張圖
+  const loLo = st.mean - 1.96*st.sd, loHi = st.mean + 1.96*st.sd;
+  const yLo0 = Math.min(0, ...ys, loLo), yHi0 = Math.max(0, ...ys, loHi);
+  const pad = ((yHi0 - yLo0) || 1) * 0.12;
+  const yLo = yLo0 - pad, yHi = yHi0 + pad;
+  const X = v => ML + (v-x0)/((x1-x0) || 1)*(W-ML-MR);
+  const Y = v => MT + (yHi - v)/((yHi-yLo) || 1)*(H-MT-MB);
+  const c = colorOf(d.station);
+
+  let out = "";
+  for (let i = 0; i <= 4; i++){
+    const v = yHi - i*(yHi-yLo)/4, y = Y(v);
+    out += `<line class="gridline" x1="${ML}" x2="${W-MR}" y1="${y}" y2="${y}"/>` +
+           `<text class="axis-lbl" x="${ML-6}" y="${y+3}" text-anchor="end">${v.toFixed(1)}</text>`;
+  }
+  for (let i = 0; i <= 4; i++){
+    const v = x0 + (x1-x0)*i/4;
+    out += `<text class="axis-lbl" x="${X(v)}" y="${H-MB+14}" text-anchor="middle">${v.toFixed(0)}</text>`;
+  }
+  const line = (v, dash, label, col, left) =>
+    `<line x1="${ML}" x2="${W-MR}" y1="${Y(v)}" y2="${Y(v)}" stroke="${col}" stroke-width="1.1"${
+      dash ? ' stroke-dasharray="5 4"' : ""}/>` +
+    `<text class="axis-lbl" x="${left ? ML+4 : W-MR}" y="${Y(v)-4}" text-anchor="${
+      left ? "start" : "end"}" fill="${col}">${label}${left ? "" : " " + v.toFixed(1)}</text>`;
+
+  out += pairs.map((p,i) =>
+    `<circle cx="${X(xs[i]).toFixed(1)}" cy="${Y(ys[i]).toFixed(1)}" r="2.2" fill="${c}" opacity=".55"/>`).join("");
+  out += line(0, false, "無差異", "#8A9B96", true);
+  out += line(st.mean, false, "bias", c);
+  out += line(loHi, true, "+1.96SD", "#8A4B12");
+  out += line(loLo, true, "−1.96SD", "#8A4B12");
+  out += `<text class="axis-lbl" transform="rotate(-90 12 ${(MT+H-MB)/2})" x="12" y="${
+           (MT+H-MB)/2}" text-anchor="middle">差值（微型 − 國家）</text>` +
+         `<text class="axis-lbl" x="${(ML+W-MR)/2}" y="${H-4}" text-anchor="middle">兩者平均（${escHtml(d.unit)}）</text>`;
+
+  return `<div class="chartbox"><svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Bland–Altman 圖：${
+    escHtml(stationLabel(d.station))} 與 ${escHtml(stationLabel(ref.station))} 的小時配對差值">${out}</svg></div>`;
+}
+
+/* 濕度分層：RH 取自該微型感測器自身的 datastream（濕度是已知的干擾因子） */
+function rhStrata(pairs, d){
+  const rh = dataset.find(x => x.station.uid === d.station.uid && /^(RH|humidity|相對濕度)$/i.test(x.param) && x.points.length);
+  if (!rh)
+    return `<p class="hint" style="margin:4px 0 0">想看濕度分層的話，把該微型感測器的 RH 測項一起勾選再載入一次。</p>`;
+
+  const H = hourlyMap(rh).map;
+  const bins = [
+    {label:"RH < 70%",      f:v => v < 70},
+    {label:"70% ≤ RH < 85%", f:v => v >= 70 && v < 85},
+    {label:"RH ≥ 85%",      f:v => v >= 85}
+  ];
+  const rows = bins.map(b => {
+    const sel = pairs.filter(p => H.has(p.hk) && b.f(H.get(p.hk)));
+    const st = describe(sel.map(p => p.micro - p.nat));
+    return `<tr><td>${b.label}</td><td>${st.n}</td><td>${st.n ? (st.mean >= 0 ? "+" : "") + fmt(st.mean) : "—"}</td>
+            <td>${fmt(st.sd)}</td></tr>`;
+  }).join("");
+  const missing = pairs.filter(p => !H.has(p.hk)).length;
+  return `<table style="margin-top:8px"><tbody>
+      <tr><th>濕度分層（該微型感測器自身 RH）</th><th>n（小時）</th><th>bias</th><th>差值 SD</th></tr>
+      ${rows}
+    </tbody></table>` +
+    (missing ? `<p class="hint" style="margin:2px 0 0">${missing} 個配對小時沒有對應的 RH 值，未納入分層。</p>` : "");
 }
 
 /* ===================== 匯出 / 深連結 ===================== */
