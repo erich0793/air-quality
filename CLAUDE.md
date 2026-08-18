@@ -38,6 +38,9 @@
 | 項目 | 值 |
 |---|---|
 | 微型感測器 endpoint | `https://sta.colife.org.tw/STA_AirQuality_EPAIoT/v1.0/`（鏡像：`https://sta.ci.taiwan.gov.tw/STA_AirQuality_EPAIoT/v1.0/`） |
+| 微型感測器的 CORS | **通**。使用者在 `https://erich0793.github.io` 上實測，資料正常載入，代表 `sta.colife.org.tw` 有回 `Access-Control-Allow-Origin`，這條路線**不需要 `worker.js`**。（`sta.ci.taiwan.gov.tw` 仍未知，見下方） |
+| 實測到的取樣間隔 | 裝置 `13580653094` 實際是**每 1 分鐘**一筆，不是資料集文件寫的 3 分鐘。取樣間隔一律以序列自身的中位數推算，不要寫死 3 分鐘 |
+| 實測到的 datastream 名稱（微型） | `PM2.5`、`Relative humidity`、`Temperature`（該站共 3 項）。注意濕度叫 **`Relative humidity`**，不是 `RH` |
 | 國家空品測站 endpoint | **不在這張表裡——這是高風險假設，見下一節。** |
 | 協定 | OGC SensorThings API v1.0 |
 | API key | **不需要** |
@@ -67,6 +70,13 @@
 而那份設定檔裡 `authority` 仍寫「行政院環境保護署」——環保署已於 2023 年 8 月改制為**環境部**，
 代表該設定檔至少兩年沒更新過。一份兩年沒更新的設定檔，裡面的 endpoint 同樣可能已經遷移、
 改版或停用。
+
+**2026-08-19 實測結果：加入「板橋」失敗，錯誤是 `TypeError`（fetch 層失敗）**，
+也就是瀏覽器連 `sta.ci.taiwan.gov.tw` 這台主機都沒成功——可能是該主機沒回 CORS 標頭，
+也可能是主機／路徑根本不存在。同一時間 `sta.colife.org.tw` 的請求是成功的，
+所以問題出在這個 endpoint，不是使用者的網路。**這強化了本節的判斷：這個 endpoint 不可信。**
+下一步是逐一探測候選 endpoint（`sta.colife.org.tw` 的 v2 鏡像、`STA_AirQuality_EPA` 等），
+確認哪一個既存在又允許跨來源。
 
 因此在使用者提供實測確認的 endpoint 之前：
 
@@ -112,6 +122,13 @@
    | A | 分頁請求被來源站限流（429／5xx），失敗的頁被靜默丟掉 | 已改成重試＋失敗計數，狀態列會出現「N 頁抓取失敗」 |
    | B | 伺服器沒回 `@iot.count`，程式只取到第一頁 100 筆 | 已改成改跟 `@iot.nextLink` 逐頁走 |
    | C | **STA endpoint 只保留近期觀測值，較舊的資料只在 <https://history.colife.org.tw>** | **完全沒處理，程式碼目前假設 STA 有完整歷史** |
+
+   **2026-08-19 實測（裝置 `13580653094`，選 3 天）：只拿到 164 筆、涵蓋 0.1 天，
+   最新一筆 08-19 06:43，取樣間隔 1 分鐘。** 164 > 單頁 100，代表程式有抓第二頁；
+   也就是**伺服器自己回報這個 3 天區間只有 164 筆**（`@iot.count`）。
+   因此 A（限流丟頁）與 B（只取第一頁）**都不是這次的成因**，
+   剩下兩種可能：C（endpoint 只留近期資料）或**該感測器本身在那 3 天大部分時間離線**。
+   兩者用下面的 curl／console 探測即可分辨：看該 datastream 的最舊一筆與總筆數。
 
    A、B 是「修掉了但沒覆核」，C 是**還沒驗證也還沒處理**的可能性。
    如果 C 成立，那麼不管分頁寫得多好，超過保留期的區間都不會有資料，
