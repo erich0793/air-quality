@@ -85,6 +85,9 @@
   .badge.epa{border-color:#3B5C8A;color:#3B5C8A;background:#EDF1F7}
   .badge.iot{border-color:var(--accent);color:var(--accent);background:var(--accent-soft)}
 
+  pre#diagOut{font-family:var(--mono);font-size:10.5px;line-height:1.5;background:#F4F7F6;border:1px solid var(--rule-strong);
+    border-radius:2px;padding:9px 10px;margin:10px 0 0;max-height:420px;overflow:auto;white-space:pre-wrap;word-break:break-all;color:var(--ink-2)}
+
   .paramlist{display:flex;flex-wrap:wrap;gap:5px}
   .chip{display:inline-flex;align-items:center;gap:5px;font-family:var(--mono);font-size:11.5px;border:1px solid var(--rule-strong);border-radius:2px;padding:4px 8px;cursor:pointer;background:#fff;color:var(--ink-2)}
   .chip.on{border-color:var(--accent);background:var(--accent-soft);color:var(--accent);font-weight:600}
@@ -173,9 +176,14 @@
           <button id="addBtn">加入測站</button>
           <button id="demoBtn" class="ghost">用範例</button>
           <button id="listEpaBtn" class="ghost" style="display:none">列出國家測站</button>
+          <button id="diagBtn" class="ghost" style="display:none">診斷</button>
         </div>
         <p class="hint" id="addHint"></p>
         <div id="browseList"></div>
+        <pre id="diagOut" style="display:none"></pre>
+        <div class="btn-row" id="diagBar" style="display:none">
+          <button id="diagCopy" class="ghost">複製診斷結果</button>
+        </div>
 
         <details>
           <summary>改用座標找附近的微型感測器</summary>
@@ -328,6 +336,7 @@
       <li><strong>兩個來源的可比性</strong>：國家測站是法規等級儀器（β 射線／震盪天平等）並經品保程序，微型感測器多為光散射法，靈敏度與準確度不同，環境部明示微型感測器數據不宜直接比對空氣品質標準，只適合觀察<strong>相對趨勢與時間 pattern</strong>；高濕度下光散射法對 PM2.5 常有正偏誤。兩者疊圖的用途是看偏差方向與時間結構，不是校正。</li>
       <li><strong>缺值</strong>：不內插、不填補。中斷處直接斷線（斷線門檻＝該序列取樣間隔中位數的 2.5 倍，微型感測器至少 20 分鐘）。小時有效筆數不足（3 分鐘序列 &lt; 5 筆）標記為低樣本（半透明）；小時值序列本來每小時就只有 1 筆，不套用此標記。</li>
       <li><strong>分層與偏差量化</strong>：分層統計與來源間偏差一律以<strong>小時平均</strong>為單位（兩個來源時間解析度不同，先降頻成小時才可比），<code>n</code> 是有效小時數；有效筆數不足的小時整格排除，不以任何方式補值。尖峰定義為台灣時間 07–09 與 17–19 時；假日只認週六日，<strong>未納入國定假日與補班日</strong>。Bland–Altman 只描述兩個方法的一致程度，不判定何者正確，bias 也不得回頭用來校正原始曲線。濕度分層使用該微型感測器自身的 RH。</li>
+      <li><strong>頁面版本</strong>：<code id="buildTag"></code>（回報問題時附上這串，可確認你看到的是不是最新版；手機請長按重新整理或清除快取以取得新版）。</li>
       <li><strong>用途</strong>：個人資料探索工具，非法規依據。若要引用於論文或正式報告，應改用國家測站經品保程序後的數據，並註明資料擷取日期。</li>
     </ol>
   </section>
@@ -351,6 +360,7 @@ const MAX_STATIONS  = 3;
 const CONCURRENCY   = 4;      // 同時對來源站的請求數上限
 const MAX_PAGES     = 200;    // 單一序列的分頁上限，避免失控迴圈
 const PAGE_SIZE     = 100;    // 伺服器單頁上限
+const BUILD         = "2026-08-19f";   // 版本標記，診斷輸出與頁尾都會顯示，用來確認是否讀到新版
 
 const SOURCES = {
   iot: {
@@ -770,6 +780,63 @@ function renderEpaBrowser(county){
     r.addEventListener("change", () => renderEpaBrowser(r.value)));
   box.querySelectorAll("button[data-q]").forEach(btn =>
     btn.addEventListener("click", () => addDevice(btn.dataset.q, "epa")));
+}
+
+/* 診斷：把伺服器的原始回應攤開，避免再靠猜的。輸出可整段複製回報。 */
+async function runEpaDiag(){
+  const b = baseFor("epa"), out = [];
+  const push = (k, v) => out.push(k + "：" + v);
+  const get = async url => {
+    try { return {ok:true, js: await api(url, null, 1)}; }
+    catch (e){ return {ok:false, err: (e && e.message) || String(e)}; }
+  };
+
+  $("diagBtn").disabled = true;
+  setStatus("診斷中…", "busy");
+
+  push("頁面版本", BUILD);
+  push("endpoint", b);
+
+  const head = await get(b + "/Things?$top=3&$count=true&$expand=Locations");
+  if (!head.ok) push("Things 查詢", "失敗（" + head.err + "）");
+  else {
+    push("服務內 Things 總數", head.js["@iot.count"] !== undefined ? head.js["@iot.count"] : "（伺服器未回 @iot.count）");
+    push("前 3 筆原始資料", "\n" + JSON.stringify((head.js.value || []).map(t => ({
+      id: t["@iot.id"], name: t.name, properties: t.properties
+    })), null, 1));
+  }
+
+  // 直接問伺服器有沒有板橋：三種寫法都試，看哪一種回得出來
+  for (const f of ["substringof('板橋',name)",
+                   "substringof('板橋',properties/stationName)",
+                   "properties/stationName eq '板橋'",
+                   "substringof('空氣品質測站',name)"]){
+    const r = await get(b + "/Things?$top=2&$count=true&$filter=" + encodeURIComponent(f));
+    push("filter " + f,
+      r.ok ? ((r.js["@iot.count"] !== undefined ? r.js["@iot.count"] + " 筆" : (r.js.value || []).length + " 筆（無 count）") +
+              ((r.js.value || [])[0] ? " · 第一筆 name=" + JSON.stringify(r.js.value[0].name) : ""))
+           : "失敗（" + r.err + "）");
+  }
+
+  if (epaCache && epaCache.length){
+    const hist = {};
+    epaCache.forEach(s => { const a = s.authority || "（未標示）"; hist[a] = (hist[a] || 0) + 1; });
+    push("本頁已取回清單", epaCache.length + " 站（取回方式：" + epaMeta.filter + "，伺服器回報 " + epaMeta.total + " 筆" +
+                          (epaMeta.capped ? "，已達抓取上限" : "") + "）");
+    push("authority 分佈", JSON.stringify(hist, null, 1));
+    push("清單內比對到「板橋」", epaCache.filter(s => stationHaystack(s).includes("板橋")).length + " 站");
+    push("清單內新北市", epaCache.filter(s => countyOf(s) === "新北市").map(stationLabel).join("、") || "（無）");
+  } else {
+    push("本頁已取回清單", "尚未取回，請先按「列出國家測站」再按一次診斷");
+  }
+
+  $("diagBtn").disabled = false;
+  const text = out.join("\n\n");
+  $("diagOut").textContent = text;
+  $("diagOut").style.display = "block";
+  $("diagBar").style.display = "flex";
+  setStatus("診斷完成，請把下方內容整段複製或截圖回報。");
+  return text;
 }
 
 async function listEpaStations(){
@@ -1707,7 +1774,10 @@ function setSource(src){
   $("deviceInput").placeholder = cfg.placeholder;
   $("addHint").innerHTML = cfg.hint;
   $("listEpaBtn").style.display = src === "epa" ? "" : "none";
+  $("diagBtn").style.display = src === "epa" ? "" : "none";
   $("browseList").innerHTML = "";
+  $("diagOut").style.display = "none";
+  $("diagBar").style.display = "none";
 }
 
 /* ===================== 啟動 ===================== */
@@ -1717,6 +1787,7 @@ function setSource(src){
   setSource("iot");
   renderParams();
   renderLegend("PM2.5", null);
+  $("buildTag").textContent = BUILD;
 
   $("tabIot").addEventListener("click", () => setSource("iot"));
   $("tabEpa").addEventListener("click", () => setSource("epa"));
@@ -1727,6 +1798,12 @@ function setSource(src){
     $("deviceInput").value = q; addDevice(q);
   });
   $("listEpaBtn").addEventListener("click", listEpaStations);
+  $("diagBtn").addEventListener("click", runEpaDiag);
+  $("diagCopy").addEventListener("click", () => {
+    navigator.clipboard.writeText($("diagOut").textContent)
+      .then(() => setStatus("診斷結果已複製，貼回對話即可。"))
+      .catch(() => setStatus("複製失敗，請直接截圖下方內容。", "warn"));
+  });
   $("findBtn").addEventListener("click", findNearby);
   $("loadBtn").addEventListener("click", loadObservations);
   $("csvBtn").addEventListener("click", exportCSV);
