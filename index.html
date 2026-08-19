@@ -652,10 +652,14 @@ async function addDevice(q, src){
   if (!found.length){
     setStatus("查無 " + escHtml(q) + "。", "warn",
       src === "epa"
-        ? `清單裡找不到「${escHtml(q)}」` +
-          (epaCache ? `（已取回 ${epaCache.length} 站，比對範圍含名稱與所有 properties 欄位）` : "") +
-          "。按「列出國家測站」，用縣市逐一看實際有哪些站。"
+        ? `這個資料集裡沒有「${escHtml(q)}」` +
+          (epaCache ? `——它只收錄 ${epaCache.length} 站（環境部全網 77 站），` +
+                      "板橋、土城等站不在其中，換寫法也查不到。" : "。") +
+          (refPoint() ? "下方已列出離你的微型感測器最近的幾站，可直接挑一站當參考。"
+                      : "按「列出國家測站」看實際有哪些站。")
         : "確認是<strong>裝置編號</strong>而不是裝置名稱，或改用座標搜尋。");
+    // 查無時直接把可用的替代站列出來，不要讓使用者卡在死路
+    if (src === "epa" && epaCache && epaCache.length) renderEpaBrowser(refPoint() ? NEAR_KEY : undefined);
     return;
   }
   const s = found[0];
@@ -730,6 +734,24 @@ async function fetchEpaStations(onTick){
   return epaCache;
 }
 
+/* 已加入的微型感測器座標，用來算「離我最近的國家測站」。
+   實測顯示這個資料集只有 66 站（環境部全網 77 站），板橋、土城等站不在裡面，
+   所以查不到時要能直接推薦鄰近可用的站。 */
+function refPoint(){
+  const s = picked.find(p => p.src === "iot" && isFinite(p.lat) && isFinite(p.lon));
+  return s ? {lat: s.lat, lon: s.lon, label: stationLabel(s)} : null;
+}
+
+function nearestEpa(ref, k){
+  return (epaCache || [])
+    .filter(s => isFinite(s.lat) && isFinite(s.lon))
+    .map(s => ({s, dist: haversine(ref.lat, ref.lon, s.lat, s.lon)}))
+    .sort((a,b) => a.dist - b.dist)
+    .slice(0, k || 5);
+}
+
+const NEAR_KEY = "＿最近";   // 縣市 chip 裡代表「依距離排序」的虛擬分類
+
 /* 兩段式：先選縣市，再選測站；authority 只是可選的縮小條件，預設不篩掉任何站 */
 let epaAuthorityPick = "";
 
@@ -742,10 +764,24 @@ function renderEpaBrowser(county){
   const auths = [...new Set(all.map(s => s.authority || "（未標示）"))].sort((a,b) => a.localeCompare(b, "zh-Hant"));
   const list = epaAuthorityPick ? all.filter(s => (s.authority || "（未標示）") === epaAuthorityPick) : all;
 
+  const ref = refPoint();
   const counties = [...new Set(list.map(countyOf))].sort((a,b) => a.localeCompare(b, "zh-Hant"));
+  if (ref) counties.unshift(NEAR_KEY);
   const cur = county && counties.includes(county) ? county : counties[0];
-  const inCounty = list.filter(s => countyOf(s) === cur)
-                       .sort((a,b) => stationLabel(a).localeCompare(stationLabel(b), "zh-Hant"));
+
+  const dist = new Map();
+  let inCounty;
+  if (cur === NEAR_KEY && ref){
+    const near = nearestEpa(ref, 8);
+    near.forEach(({s, dist: d}) => dist.set(s.uid, d));
+    inCounty = near.map(n => n.s);
+  } else {
+    inCounty = list.filter(s => countyOf(s) === cur)
+                   .sort((a,b) => stationLabel(a).localeCompare(stationLabel(b), "zh-Hant"));
+    if (ref) inCounty.forEach(s => {
+      if (isFinite(s.lat) && isFinite(s.lon)) dist.set(s.uid, haversine(ref.lat, ref.lon, s.lat, s.lon));
+    });
+  }
 
   box.innerHTML =
     (auths.length > 1
@@ -755,11 +791,12 @@ function renderEpaBrowser(county){
           escHtml(a)}（${all.filter(s => (s.authority || "（未標示）") === a).length}）</option>`).join("") +
         '</select></label>'
       : "") +
-    '<p class="hint" style="margin:6px 0 4px">先選縣市，再點測站的「加入」：</p>' +
+    '<p class="hint" style="margin:6px 0 4px">先選縣市，再點測站的「加入」' +
+      (ref ? `；「${NEAR_KEY}」是離「${escHtml(ref.label)}」最近的幾站` : "") + '：</p>' +
     '<div class="paramlist" id="countyChips">' +
       counties.map(c => `<label class="chip${c === cur ? " on" : ""}"><input type="radio" name="county" value="${
         escHtml(c)}"${c === cur ? " checked" : ""}>${escHtml(c)}<span class="chip-b">${
-        list.filter(s => countyOf(s) === c).length}</span></label>`).join("") +
+        c === NEAR_KEY ? "8" : list.filter(s => countyOf(s) === c).length}</span></label>`).join("") +
     '</div>' +
     '<ul class="stations" style="margin-top:8px">' +
       inCounty.map(s => `
@@ -768,7 +805,9 @@ function renderEpaBrowser(county){
           <span>
             <span class="st-name">${escHtml(stationLabel(s))}</span>
             <span class="badge epa">${escHtml(s.authority || "未標示")}</span><br>
-            <span class="st-meta">${escHtml(s.stationID || s.name)}</span>
+            <span class="st-meta">${escHtml(s.stationID || s.name)}${
+              s.township ? " · " + escHtml(s.township) : ""}${
+              dist.has(s.uid) ? " · 距 " + (dist.get(s.uid)/1000).toFixed(1) + " km" : ""}</span>
           </span>
           <button class="ghost" data-q="${escHtml(stationKey(s))}" style="padding:3px 8px;font-size:11px">加入</button>
         </div></li>`).join("") +
