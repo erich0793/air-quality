@@ -621,8 +621,12 @@ async function addDevice(q, src){
 
   if (!found.length){
     setStatus("查無 " + escHtml(q) + "。", "warn",
-      src === "epa" ? "確認測站名稱（例如「板橋」而非「板橋站」），或按「列出國家測站」直接挑。"
-                    : "確認是<strong>裝置編號</strong>而不是裝置名稱，或改用座標搜尋。");
+      src === "epa"
+        ? `這個 endpoint 的測站清單裡沒有名稱含「${escHtml(q)}」的站` +
+          (epaCache ? `（清單共 ${epaCache.length} 站）` : "") +
+          "。可能是名稱寫法不同，也可能是<strong>這個資料集就是沒收錄該站</strong>——" +
+          "環境部國家空品測站共 77 站，若清單少於 77 站就是後者。按「列出國家測站」看看實際有哪些。"
+        : "確認是<strong>裝置編號</strong>而不是裝置名稱，或改用座標搜尋。");
     return;
   }
   const s = found[0];
@@ -749,7 +753,12 @@ async function listEpaStations(){
   renderEpaBrowser();
   const n = (epaCache || []).length;
   setStatus(n ? `清單共 ${n} 站（過濾條件：${escHtml(epaFilterUsed)}），先選縣市再挑測站。`
-              : "國家測站清單是空的。", n ? "" : "warn");
+              : "國家測站清單是空的。",
+            n && n >= 77 ? "" : "warn",
+            n && n < 77
+              ? `環境部國家空品測站應有 <strong>77 站</strong>，這個 endpoint 只回 ${n} 站，` +
+                "代表這個資料集沒有收錄全部測站（板橋、土城等站就不在裡面）。缺的站無法從這個來源取得。"
+              : "");
 }
 
 /* ===================== 座標搜尋（微型感測器） ===================== */
