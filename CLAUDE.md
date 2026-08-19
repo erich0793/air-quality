@@ -47,7 +47,9 @@
 | 實測到的 datastream 名稱（微型） | `PM2.5`、`Relative humidity`、`Temperature`（該站共 3 項）。注意濕度叫 **`Relative humidity`**，不是 `RH` |
 | 國家空品測站 endpoint | 路徑 `STA_AirQuality_v2/v1.0/`（官方 API 說明頁與 pyCIOT 一致，**pyCIOT 的資訊沒過期**）。<br>**主機要用 `sta.colife.org.tw`**：`https://sta.colife.org.tw/STA_AirQuality_v2/v1.0/` — 使用者 2026-08-19 於瀏覽器實測 200 OK 且 CORS 通。<br>官方文件寫的 `sta.ci.taiwan.gov.tw` 那台**從瀏覽器打不通**（`TypeError`），只能在伺服器端或 proxy 後面用 |
 | 國家測站的查法 | 官方範例是 authority 與 name 並用：`properties/authority eq '行政院環境保護署' and substringof('空氣品質測站',name)`；查特定站再 `and substringof('板橋',name)`。同一服務混有其他來源，**不能只靠 name** |
-| `authority` 的字串 | 仍是 `行政院環境保護署`（官方範例未隨 2023 年改制為環境部而更新） |
+| `authority` 的字串 | **實測回的是 `環境部`**，不是官方範例寫的 `行政院環境保護署`。使用者 2026-08-19 的畫面上每一站都標「環境部」。官方文件與實際回應不一致，程式兩個都試，以實際回應為準 |
+| 國家測站的 `stationID` | 形如 `EPA035`（不是純數字），`properties` 另有縣市（`city`／`county`） |
+| 國家測站清單的筆數 | 符合 `substringof('空氣品質測站',name)` 的 Thing **超過 100 筆**，只抓一頁會把板橋、土城這些站截掉，必須分頁抓完 |
 | Thing 名稱格式（國家） | `空氣品質測站-<測站名>`，例如 `空氣品質測站-新莊` |
 | **資料保留期** | **兩個 STA endpoint 都只保留近期觀測值。** 實測微型感測器 `13580653094` 的 PM2.5：最舊 `2026-08-18T21:00:30Z`、最新 `23:00:30Z`、`@iot.count` = 121 — 整條序列只有**約 2 小時**。查再長的區間也拿不到更早的資料，完整歷史只能走 <https://history.colife.org.tw> |
 | 協定 | OGC SensorThings API v1.0 |
@@ -90,9 +92,9 @@
 
 ## 未驗證，需要實測確認
 
-1. **國家空品測站的實際回應** — endpoint 與查法已確認可連（見「已驗證」），但**還沒真的加成功過一站**。
-   待覆核：`properties` 裡到底有哪些欄位（`stationName`？`stationID`？）、datastream 名稱字串
-   （`PM2.5`／`O3`／`AMB_TEMP`…）、以及下面第 2 項的時間格式。
+1. **國家空品測站的觀測值** — 清單、縣市、authority、stationID 都已由實測確認（見「已驗證」），
+   但**還沒真的載入過一站的觀測值**。待覆核：datastream 名稱字串（`PM2.5`／`O3`／`AMB_TEMP`…）、
+   下面第 2 項的時間格式，以及第 3 項的保留期。
 
 2. **國家測站的 `phenomenonTime` 格式** — 小時值有可能是時間區間（`起/迄`）。
    程式碼遇到含 `/` 的字串會取**區間起點**當時標；若實際是區間終點代表該小時，
@@ -194,6 +196,10 @@
   這同時提供可分享／可加書籤的深連結。舊格式 `#device=<id>` 仍相容，一律視為微型感測器。
 - **兩個 endpoint**：`SOURCES.iot` / `SOURCES.epa` 各自對應一個輸入框，切換 tab 只換來源與提示文字。
   新增第三個來源就往 `SOURCES` 加一筆。
+- **國家測站一律走清單快取**（`fetchEpaStations()`）：整份清單分頁抓回來存 `epaCache`，
+  UI 先選縣市再選測站，打字查詢也是拿這份清單做本機比對（`matchEpa()`）。
+  **不要退回用伺服器 `$filter` 查單站**——實測顯示多條件 filter 與 authority 字串都不可靠，
+  清單比對是唯一不會漏站的做法。
 - **資料保留期**：加站時 `probeRange()` 會問該 datastream 最舊／最新的一筆，存進 `st.range`，
   UI 顯示「可查 …」。載入後若區間早於保留期，狀態列要明講是**保留期不足**，
   不得再歸因成「抓取失敗」或「感測器離線」——這三者是不同的原因，訊息不可混用。

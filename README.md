@@ -80,15 +80,16 @@ TW040203A0506884     ← TW 開頭，對應 properties/locationId
 板橋    萬華    三重    土城    菜寮    新莊
 ```
 
-不確定名稱就按 **列出國家測站**，會把該 endpoint 上的測站全部列出來，點「加入」即可。
+或按 **列出國家測站**：會把整份清單抓回來（分頁抓完，不截斷），
+**先選縣市、再點測站的「加入」**，不用記名稱。
 
-比對順序：`authority` + `空氣品質測站` + 測站名稱（官方查法）→ 名稱片段 →
-`name` 完全相符 → `properties/stationName` → `properties/stationID`。
+打字查詢也是拿同一份清單做本機比對，所以只要清單裡有的站都找得到。
 
-> 國家測站的 endpoint（`STA_AirQuality_v2`）同一個服務裡混有不同來源的資料，所以查詢時
-> `authority` 與 `name` 兩個條件並用（照官方 API 說明頁的範例）：
-> `properties/authority eq '行政院環境保護署' and substringof('空氣品質測站', name)`，
-> 查特定站再加 `and substringof('板橋', name)`。Thing 的實際名稱長得像「空氣品質測站-新莊」。
+> 這個服務混有不同來源的 Thing，且符合條件的筆數超過單頁上限 100，
+> 所以本頁把清單分頁抓完再於本機比對。Thing 名稱長得像「空氣品質測站-新莊」，
+> `stationID` 長得像 `EPA035`。
+> 官方 API 說明頁的範例用 `properties/authority eq '行政院環境保護署'`，
+> 但**實際回應是「環境部」**——兩個字串本頁都會試。
 
 ---
 
