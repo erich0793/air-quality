@@ -503,8 +503,24 @@ function mkStation(t, lat, lon, src){
     city: p.city || p.county || "",
     township: p.township || "",
     area: p.areaDescription || p.areaType || "",
+    props: p,                                  // 整包留著：不同來源的欄位名不一致，比對時全部一起搜
     lat, lon, streams: []
   };
+}
+
+/* 比對用的字串：名稱＋properties 裡所有字串值。
+   不預設測站名一定放在 name 或 stationName，避免又因為欄位名猜錯而漏站。 */
+function stationHaystack(s){
+  const vals = Object.values(s.props || {}).filter(v => typeof v === "string");
+  return [s.name, ...vals].join(" ");
+}
+
+/* 縣市：先看常見欄位，再從 properties 裡找結尾是「縣」或「市」的字串 */
+function countyOf(s){
+  if (s.city) return s.city;
+  const v = Object.values(s.props || {})
+    .find(x => typeof x === "string" && /^[一-龥]{2,4}(縣|市)$/.test(x.trim()));
+  return v ? v.trim() : "其他";
 }
 
 /* 寫進網址 hash 的識別字串 */
@@ -562,9 +578,13 @@ function thingsToStations(js, src){
    清單比對是唯一不會因為 authority 字串或 filter 語法而漏掉測站的做法。 */
 function matchEpa(list, q){
   const k = q.trim(), up = k.toUpperCase();
-  const exact = list.filter(s => stationLabel(s) === k || s.name === k || (s.stationID || "").toUpperCase() === up);
+  const exact = list.filter(s =>
+    stationLabel(s) === k || s.name === k || s.stationName === k ||
+    (s.stationID || "").toUpperCase() === up ||
+    Object.values(s.props || {}).some(v => typeof v === "string" && v.trim() === k));
   if (exact.length) return exact;
-  return list.filter(s => (s.name || "").includes(k) || stationLabel(s).includes(k));
+  // 比對範圍是名稱＋所有 properties 字串值，不假設站名放在哪個欄位
+  return list.filter(s => stationHaystack(s).includes(k));
 }
 
 async function resolveDevice(q, src){
@@ -622,10 +642,9 @@ async function addDevice(q, src){
   if (!found.length){
     setStatus("查無 " + escHtml(q) + "。", "warn",
       src === "epa"
-        ? `這個 endpoint 的測站清單裡沒有名稱含「${escHtml(q)}」的站` +
-          (epaCache ? `（清單共 ${epaCache.length} 站）` : "") +
-          "。可能是名稱寫法不同，也可能是<strong>這個資料集就是沒收錄該站</strong>——" +
-          "環境部國家空品測站共 77 站，若清單少於 77 站就是後者。按「列出國家測站」看看實際有哪些。"
+        ? `清單裡找不到「${escHtml(q)}」` +
+          (epaCache ? `（已取回 ${epaCache.length} 站，比對範圍含名稱與所有 properties 欄位）` : "") +
+          "。按「列出國家測站」，用縣市逐一看實際有哪些站。"
         : "確認是<strong>裝置編號</strong>而不是裝置名稱，或改用座標搜尋。");
     return;
   }
@@ -650,72 +669,83 @@ async function addDevice(q, src){
 
 /* ===================== 國家測站清單 ===================== */
 
-/* 這個服務混有多個來源的 Thing，且總數超過單頁 100 筆，所以要把整份清單分頁抓回來快取。
-   實測 authority 回的是「環境部」，不是官方範例寫的「行政院環境保護署」，兩者都留在嘗試清單裡。 */
+/* 教訓：先前用 authority／名稱關鍵字在伺服器端過濾，結果因為 authority 字串與命名慣例
+   跟預期不同，清單少了 11 站（板橋、土城…）。現在**不在伺服器端過濾**：
+   整份 Things 抓回來，篩選與比對一律在本機做，UI 上把 authority 當成可選的篩選條件。 */
 let epaCache = null;      // [station]
-let epaFilterUsed = "";
+let epaMeta  = {total:0, capped:false, filter:""};
+const EPA_MAX_PAGES = 25; // 抓取上限，避免對來源站造成過量負載
+
+async function fetchThingList(b, filter, onTick){
+  const qs = "?$top=" + PAGE_SIZE + "&$expand=Locations&$count=true" +
+             (filter ? "&$filter=" + encodeURIComponent(filter) : "");
+  const first = await api(b + "/Things" + qs, null, 2);
+  const list = thingsToStations(first, "epa");
+  const total = Number(first["@iot.count"]);
+  let capped = false;
+  if (Number.isFinite(total) && total > list.length && list.length){
+    const want = Math.ceil(total / list.length);
+    const pages = Math.min(want, EPA_MAX_PAGES);
+    capped = want > pages;
+    const tasks = [];
+    for (let p = 1; p < pages; p++){
+      const skip = p * list.length;
+      tasks.push(async () => {
+        try { return thingsToStations(await api(b + "/Things" + qs + "&$skip=" + skip, null, 2), "epa"); }
+        catch (e){ if (e.name === "AbortError") throw e; return []; }
+      });
+    }
+    (await pool(tasks, CONCURRENCY, onTick)).forEach(v => list.push(...v));
+  }
+  const seen = new Set();
+  return {list: list.filter(s => !seen.has(s.uid) && seen.add(s.uid)),
+          total: Number.isFinite(total) ? total : list.length, capped};
+}
 
 async function fetchEpaStations(onTick){
   if (epaCache) return epaCache;
   const b = baseFor("epa");
-  const tries = [
-    `properties/authority eq '環境部' and substringof('${EPA_NAME_TAG}',name)`,
-    `properties/authority eq '${EPA_AUTHORITY}' and substringof('${EPA_NAME_TAG}',name)`,
-    `substringof('${EPA_NAME_TAG}',name)`,
-    `properties/authority eq '環境部'`,
-    `properties/authority eq '${EPA_AUTHORITY}'`,
-    null
-  ];
-  for (const f of tries){
-    const qs = "?$top=" + PAGE_SIZE + "&$expand=Locations&$count=true" +
-               (f ? "&$filter=" + encodeURIComponent(f) : "");
-    let first;
-    try { first = await api(b + "/Things" + qs, null, 2); }
-    catch (e){ if (isNetworkFailure(e)) throw e; continue; }
 
-    let list = thingsToStations(first, "epa");
-    if (!list.length) continue;
-
-    // 超過一頁就把其餘頁抓完，否則清單會被截斷（板橋、土城就是這樣消失的）
-    const total = Number(first["@iot.count"]);
-    if (Number.isFinite(total) && total > list.length){
-      const pages = Math.min(Math.ceil(total / PAGE_SIZE), 12);
-      const tasks = [];
-      for (let p = 1; p < pages; p++){
-        const skip = p * PAGE_SIZE;
-        tasks.push(async () => {
-          try { return thingsToStations(await api(b + "/Things" + qs + "&$skip=" + skip, null, 2), "epa"); }
-          catch (e){ if (e.name === "AbortError") throw e; return []; }
-        });
-      }
-      const rest = await pool(tasks, CONCURRENCY, onTick);
-      rest.forEach(v => list.push(...v));
-    }
-    const seen = new Set();
-    epaCache = list.filter(s => !seen.has(s.uid) && seen.add(s.uid));
-    epaFilterUsed = f || "（未過濾）";
+  // 先試名稱含「空氣品質測站」的子集（便宜）；只有在它看起來完整（≥ 77 站）時才採用，
+  // 否則整份抓回來——寧可多抓，也不要再漏站。
+  const tagged = await fetchThingList(b, `substringof('${EPA_NAME_TAG}',name)`, onTick);
+  if (tagged.list.length >= 77){
+    epaCache = tagged.list;
+    epaMeta = {total: tagged.total, capped: tagged.capped, filter: `substringof('${EPA_NAME_TAG}',name)`};
     return epaCache;
   }
-  epaCache = [];
+  const all = await fetchThingList(b, null, onTick);
+  epaCache = all.list;
+  epaMeta = {total: all.total, capped: all.capped, filter: "（未過濾，全部取回）"};
   return epaCache;
 }
 
-const countyOf = s => s.city || s.township || "其他";
+/* 兩段式：先選縣市，再選測站；authority 只是可選的縮小條件，預設不篩掉任何站 */
+let epaAuthorityPick = "";
 
-/* 兩段式：先選縣市，再選測站 */
 function renderEpaBrowser(county){
-  const box = $("browseList"), list = epaCache || [];
-  if (!list.length){
+  const box = $("browseList"), all = epaCache || [];
+  if (!all.length){
     box.innerHTML = '<p class="hint" style="margin:6px 0 0">endpoint 沒有回傳測站。確認「國家空品測站 endpoint」是否正確。</p>';
     return;
   }
+  const auths = [...new Set(all.map(s => s.authority || "（未標示）"))].sort((a,b) => a.localeCompare(b, "zh-Hant"));
+  const list = epaAuthorityPick ? all.filter(s => (s.authority || "（未標示）") === epaAuthorityPick) : all;
+
   const counties = [...new Set(list.map(countyOf))].sort((a,b) => a.localeCompare(b, "zh-Hant"));
   const cur = county && counties.includes(county) ? county : counties[0];
   const inCounty = list.filter(s => countyOf(s) === cur)
                        .sort((a,b) => stationLabel(a).localeCompare(stationLabel(b), "zh-Hant"));
 
   box.innerHTML =
-    '<p class="hint" style="margin:8px 0 4px">先選縣市，再點測站的「加入」：</p>' +
+    (auths.length > 1
+      ? '<label class="field" style="margin:8px 0 6px"><span>資料提供單位（authority）</span>' +
+        '<select id="epaAuth"><option value="">全部（' + all.length + ' 站）</option>' +
+        auths.map(a => `<option value="${escHtml(a)}"${a === epaAuthorityPick ? " selected" : ""}>${
+          escHtml(a)}（${all.filter(s => (s.authority || "（未標示）") === a).length}）</option>`).join("") +
+        '</select></label>'
+      : "") +
+    '<p class="hint" style="margin:6px 0 4px">先選縣市，再點測站的「加入」：</p>' +
     '<div class="paramlist" id="countyChips">' +
       counties.map(c => `<label class="chip${c === cur ? " on" : ""}"><input type="radio" name="county" value="${
         escHtml(c)}"${c === cur ? " checked" : ""}>${escHtml(c)}<span class="chip-b">${
@@ -727,13 +757,15 @@ function renderEpaBrowser(county){
           <span style="width:0"></span>
           <span>
             <span class="st-name">${escHtml(stationLabel(s))}</span>
-            <span class="badge epa">${escHtml(s.authority || "國家測站")}</span><br>
+            <span class="badge epa">${escHtml(s.authority || "未標示")}</span><br>
             <span class="st-meta">${escHtml(s.stationID || s.name)}</span>
           </span>
           <button class="ghost" data-q="${escHtml(stationKey(s))}" style="padding:3px 8px;font-size:11px">加入</button>
         </div></li>`).join("") +
     '</ul>';
 
+  const sel = $("epaAuth");
+  if (sel) sel.addEventListener("change", () => { epaAuthorityPick = sel.value; renderEpaBrowser(); });
   box.querySelectorAll('input[name=county]').forEach(r =>
     r.addEventListener("change", () => renderEpaBrowser(r.value)));
   box.querySelectorAll("button[data-q]").forEach(btn =>
@@ -752,12 +784,12 @@ async function listEpaStations(){
   $("listEpaBtn").disabled = false;
   renderEpaBrowser();
   const n = (epaCache || []).length;
-  setStatus(n ? `清單共 ${n} 站（過濾條件：${escHtml(epaFilterUsed)}），先選縣市再挑測站。`
+  setStatus(n ? `清單共 ${n} 站（伺服器回報 ${epaMeta.total} 筆，取回方式：${escHtml(epaMeta.filter)}），` +
+                "先選縣市再挑測站；不同資料提供單位可用上方下拉選單縮小。"
               : "國家測站清單是空的。",
-            n && n >= 77 ? "" : "warn",
-            n && n < 77
-              ? `環境部國家空品測站應有 <strong>77 站</strong>，這個 endpoint 只回 ${n} 站，` +
-                "代表這個資料集沒有收錄全部測站（板橋、土城等站就不在裡面）。缺的站無法從這個來源取得。"
+            n && !epaMeta.capped ? "" : "warn",
+            epaMeta.capped
+              ? `超過取回上限（${EPA_MAX_PAGES} 頁），只抓到前 ${n} 站，後面的站沒列出來。`
               : "");
 }
 

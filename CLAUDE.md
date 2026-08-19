@@ -46,10 +46,10 @@
 | 實測到的取樣間隔 | 裝置 `13580653094` 實際是**每 1 分鐘**一筆，不是資料集文件寫的 3 分鐘。取樣間隔一律以序列自身的中位數推算，不要寫死 3 分鐘 |
 | 實測到的 datastream 名稱（微型） | `PM2.5`、`Relative humidity`、`Temperature`（該站共 3 項）。注意濕度叫 **`Relative humidity`**，不是 `RH` |
 | 國家空品測站 endpoint | 路徑 `STA_AirQuality_v2/v1.0/`（官方 API 說明頁與 pyCIOT 一致，**pyCIOT 的資訊沒過期**）。<br>**主機要用 `sta.colife.org.tw`**：`https://sta.colife.org.tw/STA_AirQuality_v2/v1.0/` — 使用者 2026-08-19 於瀏覽器實測 200 OK 且 CORS 通。<br>官方文件寫的 `sta.ci.taiwan.gov.tw` 那台**從瀏覽器打不通**（`TypeError`），只能在伺服器端或 proxy 後面用 |
-| 國家測站的查法 | 官方範例是 authority 與 name 並用：`properties/authority eq '行政院環境保護署' and substringof('空氣品質測站',name)`；查特定站再 `and substringof('板橋',name)`。同一服務混有其他來源，**不能只靠 name** |
-| `authority` 的字串 | **實測回的是 `環境部`**，不是官方範例寫的 `行政院環境保護署`。使用者 2026-08-19 的畫面上每一站都標「環境部」。官方文件與實際回應不一致，程式兩個都試，以實際回應為準 |
+| 國家測站的查法 | **不要在伺服器端過濾。** 官方範例的 `properties/authority eq '行政院環境保護署' and substringof('空氣品質測站',name)` 實測會漏站：多數站 authority 回「環境部」，但板橋、土城等站不符合這組條件（authority 不同，名稱也不含該關鍵字），照官方寫法只拿得到 66 站。正確做法是整份 Things 抓回來，在本機比對 |
+| `authority` 的字串 | **同一個服務裡不只一種值。** 清單上多數站標「環境部」，但板橋等站是別的值——官方範例寫的 `行政院環境保護署` 只涵蓋一部分。**任何以 authority 過濾的做法都會漏站**，只能拿它當顯示與可選的篩選條件 |
 | 國家測站的 `stationID` | 形如 `EPA035`（不是純數字），`properties` 另有縣市（`city`／`county`） |
-| 國家測站清單的筆數 | 符合 `substringof('空氣品質測站',name)` 的 Thing **超過 100 筆**，只抓一頁會把板橋、土城這些站截掉，必須分頁抓完 |
+| 國家測站清單的筆數 | 符合 `substringof('空氣品質測站',name)` 的只有 **66 站**（少於環境部的 77 站）；服務內 Things 總數遠大於此。所以清單一律**不過濾、分頁抓完**（`EPA_MAX_PAGES` 上限），再於本機分縣市呈現 |
 | Thing 名稱格式（國家） | `空氣品質測站-<測站名>`，例如 `空氣品質測站-新莊` |
 | **資料保留期** | **兩個 STA endpoint 都只保留近期觀測值。** 實測微型感測器 `13580653094` 的 PM2.5：最舊 `2026-08-18T21:00:30Z`、最新 `23:00:30Z`、`@iot.count` = 121 — 整條序列只有**約 2 小時**。查再長的區間也拿不到更早的資料，完整歷史只能走 <https://history.colife.org.tw> |
 | 協定 | OGC SensorThings API v1.0 |
@@ -196,10 +196,13 @@
   這同時提供可分享／可加書籤的深連結。舊格式 `#device=<id>` 仍相容，一律視為微型感測器。
 - **兩個 endpoint**：`SOURCES.iot` / `SOURCES.epa` 各自對應一個輸入框，切換 tab 只換來源與提示文字。
   新增第三個來源就往 `SOURCES` 加一筆。
-- **國家測站一律走清單快取**（`fetchEpaStations()`）：整份清單分頁抓回來存 `epaCache`，
-  UI 先選縣市再選測站，打字查詢也是拿這份清單做本機比對（`matchEpa()`）。
-  **不要退回用伺服器 `$filter` 查單站**——實測顯示多條件 filter 與 authority 字串都不可靠，
-  清單比對是唯一不會漏站的做法。
+- **國家測站一律走清單快取且不在伺服器端過濾**（`fetchEpaStations()`）：先試名稱關鍵字的子集，
+  只有在它 ≥ 77 站時才採用，否則整份抓回來存 `epaCache`。UI 先選縣市再選測站，
+  authority 只是可選的下拉篩選，預設不篩掉任何站。
+  **不要退回用 `$filter` 查單站或用 authority 過濾**——實測兩者都會漏站（板橋就是這樣消失的）。
+- **比對不要假設欄位名**：`stationHaystack()` 把 `name` 與 `properties` 裡所有字串值一起搜，
+  `countyOf()` 也會在 properties 裡找結尾是「縣／市」的值。不同來源的欄位命名不一致，
+  寫死欄位名就會漏站。
 - **資料保留期**：加站時 `probeRange()` 會問該 datastream 最舊／最新的一筆，存進 `st.range`，
   UI 顯示「可查 …」。載入後若區間早於保留期，狀態列要明講是**保留期不足**，
   不得再歸因成「抓取失敗」或「感測器離線」——這三者是不同的原因，訊息不可混用。
