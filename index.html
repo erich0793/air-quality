@@ -310,7 +310,9 @@
         <div class="serieskey" id="seriesKey"></div>
         <div id="charts"><p class="hint" style="margin:0">尚無資料。</p></div>
         <p class="hint">
-          細線＝微型感測器（3 分鐘值）；粗線加空心圓點＝國家空品測站（小時值，已是該小時平均）。
+          細線＝微型感測器（分鐘級原始值）；粗線加空心圓點＝國家空品測站（小時值，已是該小時平均）。
+          <strong>各來源的可回溯長度差很多</strong>：微型感測器與 STA 只留最近約 2 小時，
+          環境部開放資料約 4 天——圖例上每一站後面的數字就是它自己的涵蓋範圍。
           兩者時間解析度不同，只能比較趨勢與同一小時的水準，不可逐點相減。
           缺值不內插，中斷處直接斷線。
         </p>
@@ -383,7 +385,7 @@ const MAX_STATIONS  = 3;
 const CONCURRENCY   = 4;      // 同時對來源站的請求數上限
 const MAX_PAGES     = 200;    // 單一序列的分頁上限，避免失控迴圈
 const PAGE_SIZE     = 100;    // 伺服器單頁上限
-const BUILD         = "2026-08-20a";   // 版本標記，診斷輸出與頁尾都會顯示，用來確認是否讀到新版
+const BUILD         = "2026-08-20b";   // 版本標記，診斷輸出與頁尾都會顯示，用來確認是否讀到新版
 
 /* 環境部開放資料的欄位 → 本頁的測項名稱。PM2.5 用同一個名稱，才能跟微型感測器疊在同一張圖。
    實測欄位：aqx_p_488 用 windspeed／datacreationdate，aqx_p_432 用 wind_speed／publishtime。 */
@@ -1536,8 +1538,11 @@ function renderKey(){
   const seen = new Set();
   box.innerHTML = L.filter(d => !seen.has(d.station.uid) && seen.add(d.station.uid)).map(d => {
     const c = colorOf(d.station);
+    const own = L.filter(x => x.station.uid === d.station.uid).flatMap(x => x.points).map(p => p.ms);
+    const span = own.length ? fmtSpan(Math.max(...own) - Math.min(...own)) : "—";
     return `<span><span class="swatch${isHourly(d) ? " ring" : ""}" style="background:${c};border-color:${c}"></span>${
-      escHtml(stationLabel(d.station))}<span class="badge ${d.station.src}">${SOURCES[d.station.src].badge}</span></span>`;
+      escHtml(stationLabel(d.station))}<span class="badge ${d.station.src}">${SOURCES[d.station.src].badge}</span>` +
+      `<span style="color:var(--muted)"> ${span}</span></span>`;
   }).join("");
 }
 
@@ -1611,8 +1616,8 @@ function renderCharts(){
   });
 
   $("seriesMeta").textContent =
-    `${new Set(L.map(d => d.station.uid)).size} 站 · ${params.length} 測項 · 實際涵蓋 ${
-      fmtSpan(t1-t0)} · ${allPts.length} 點`;
+    `${new Set(L.map(d => d.station.uid)).size} 站 · ${params.length} 測項 · 時間軸 ${
+      fmtSpan(t1-t0)}（各站涵蓋見圖例）· ${allPts.length} 點`;
 }
 
 function drawChart(svg, ro, series, t0, t1, H){
