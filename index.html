@@ -185,6 +185,22 @@
           <button id="diagCopy" class="ghost">複製診斷結果</button>
         </div>
 
+        <details id="moenvBox" style="display:none">
+          <summary>缺的測站（板橋、土城…）：環境部開放資料平臺探測</summary>
+          <p class="hint" style="margin-top:8px">
+            本頁的 SensorThings 服務只收錄 66 站。環境部自己的開放資料平臺
+            （<a href="https://data.moenv.gov.tw" target="_blank" rel="noopener">data.moenv.gov.tw</a>，
+            即 data.gov.tw 資料集 40448）有全部 77 站含板橋，但那是**另一支 API**，
+            需要註冊取得 api_key。按下方按鈕會實測 CORS、是否需要 key、以及歷史資料集
+            <code>aqx_p_488</code> 能不能取到時間序列——確認可行才值得接進來。
+          </p>
+          <label class="field">
+            <span>api_key（只在這次操作使用，不會存進瀏覽器，也不會寫進網址）</span>
+            <input type="text" id="moenvKey" placeholder="留空也可以試，看它是否強制要求" autocomplete="off" spellcheck="false">
+          </label>
+          <div class="btn-row"><button id="moenvBtn" class="ghost">測試環境部開放資料</button></div>
+        </details>
+
         <details>
           <summary>改用座標找附近的微型感測器</summary>
           <label class="field" style="margin-top:10px">
@@ -360,7 +376,7 @@ const MAX_STATIONS  = 3;
 const CONCURRENCY   = 4;      // 同時對來源站的請求數上限
 const MAX_PAGES     = 200;    // 單一序列的分頁上限，避免失控迴圈
 const PAGE_SIZE     = 100;    // 伺服器單頁上限
-const BUILD         = "2026-08-19f";   // 版本標記，診斷輸出與頁尾都會顯示，用來確認是否讀到新版
+const BUILD         = "2026-08-19g";   // 版本標記，診斷輸出與頁尾都會顯示，用來確認是否讀到新版
 
 const SOURCES = {
   iot: {
@@ -819,6 +835,59 @@ function renderEpaBrowser(county){
     r.addEventListener("change", () => renderEpaBrowser(r.value)));
   box.querySelectorAll("button[data-q]").forEach(btn =>
     btn.addEventListener("click", () => addDevice(btn.dataset.q, "epa")));
+}
+
+/* 探測環境部開放資料平臺（data.moenv.gov.tw）：這是與 SensorThings 不同的另一支 API，
+   缺的 11 站（板橋、土城…）只在那裡。先確認 CORS、api_key 需求與歷史資料集是否給時間序列，
+   確認可行才值得接進來。api_key 只用於這次請求，不存、不寫進網址、輸出時遮蔽。 */
+async function moenvProbe(){
+  const key = $("moenvKey").value.trim();
+  const out = [], push = (k, v) => out.push(k + "：" + v);
+  const mask = u => key ? u.replace(encodeURIComponent(key), "***").replace(key, "***") : u;
+  const mk = (ds, extra) => "https://data.moenv.gov.tw/api/v2/" + ds + "?" +
+    new URLSearchParams(Object.assign({format:"JSON", limit:"5"}, key ? {api_key:key} : {}, extra)).toString();
+
+  $("moenvBtn").disabled = true;
+  setStatus("探測環境部開放資料平臺…", "busy");
+  push("頁面版本", BUILD);
+  push("api_key", key ? "有填（輸出已遮蔽）" : "未填（測試是否強制要求）");
+
+  const cases = [
+    ["aqx_p_432 最新一小時（全站）", mk("aqx_p_432", {})],
+    ["aqx_p_432 只取板橋",          mk("aqx_p_432", {filters:"sitename,EQ,板橋"})],
+    ["aqx_p_488 歷史資料（板橋）",   mk("aqx_p_488", {filters:"sitename,EQ,板橋", sort:"datacreationdate desc"})]
+  ];
+
+  for (const [label, url] of cases){
+    push(label + " URL", mask(url));
+    try {
+      const r = await fetch(url, {headers:{Accept:"application/json"}});
+      const txt = await r.text();
+      let js = null;
+      try { js = JSON.parse(txt); } catch (e){}
+      const recs = (js && (js.records || js.data)) || null;
+      push(label, "HTTP " + r.status +
+        (Array.isArray(recs) ? "｜取回 " + recs.length + " 筆" : "｜回應不是預期的 records 結構") +
+        (js && js.total !== undefined ? "｜total " + js.total : ""));
+      if (Array.isArray(recs) && recs.length){
+        push(label + " 欄位", Object.keys(recs[0]).join(", "));
+        push(label + " 第一筆", "\n" + JSON.stringify(recs[0], null, 1));
+        const times = recs.map(x => x.datacreationdate || x.monitordate || x.publishtime).filter(Boolean);
+        if (times.length) push(label + " 時間欄位樣本", times.join(" ｜ "));
+      } else {
+        push(label + " 原始回應（前 300 字）", mask(txt).slice(0, 300));
+      }
+    } catch (e){
+      push(label, "fetch 失敗（" + ((e && e.message) || e) + "）→ 多半是 CORS 被擋，" +
+                  "若如此就得走 worker.js（白名單要加 data.moenv.gov.tw）");
+    }
+  }
+
+  $("moenvBtn").disabled = false;
+  $("diagOut").textContent = out.join("\n\n");
+  $("diagOut").style.display = "block";
+  $("diagBar").style.display = "flex";
+  setStatus("探測完成，請把下方內容整段複製或截圖回報。");
 }
 
 /* 診斷：把伺服器的原始回應攤開，避免再靠猜的。輸出可整段複製回報。 */
@@ -1814,6 +1883,7 @@ function setSource(src){
   $("addHint").innerHTML = cfg.hint;
   $("listEpaBtn").style.display = src === "epa" ? "" : "none";
   $("diagBtn").style.display = src === "epa" ? "" : "none";
+  $("moenvBox").style.display = src === "epa" ? "" : "none";
   $("browseList").innerHTML = "";
   $("diagOut").style.display = "none";
   $("diagBar").style.display = "none";
@@ -1838,6 +1908,7 @@ function setSource(src){
   });
   $("listEpaBtn").addEventListener("click", listEpaStations);
   $("diagBtn").addEventListener("click", runEpaDiag);
+  $("moenvBtn").addEventListener("click", moenvProbe);
   $("diagCopy").addEventListener("click", () => {
     navigator.clipboard.writeText($("diagOut").textContent)
       .then(() => setStatus("診斷結果已複製，貼回對話即可。"))
