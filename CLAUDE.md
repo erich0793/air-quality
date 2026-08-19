@@ -25,9 +25,13 @@
 部署目標：GitHub Pages（純靜態，無 build step）。
 
 **驗證狀態**：微型感測器路線由使用者在真實瀏覽器實測可用（裝置編號 `13580653094`）。
-國家空品測站路線與分頁修正只在 Chromium + 合成 STA 回應下驗證過（見下方「未驗證」），**尚未打過真實的國家測站 API**，
-且該 endpoint 本身是**高風險假設**（見下方專節）。「來源間偏差」面板有已知的方法學問題，
+國家測站 endpoint 已實測可連（`sta.colife.org.tw` 那台），但**還沒真的加成功過一站**，
+回應欄位與時間格式待覆核。「來源間偏差」面板有已知的方法學問題，
 **在「下一輪必修」處理完之前，那個面板的數字不得用於任何結論**。
+
+**最重要的現實限制：兩個 STA endpoint 都只保留最近幾小時的觀測值**（微型感測器實測約 2 小時）。
+「往前天數」選再多也拿不到更早的資料——這不是程式的 bug，是資料來源的設計。
+長區間必須走 <https://history.colife.org.tw> 的批次下載，那條路線還沒做。
 
 ---
 
@@ -41,7 +45,11 @@
 | 微型感測器的 CORS | **通**。使用者在 `https://erich0793.github.io` 上實測，資料正常載入，代表 `sta.colife.org.tw` 有回 `Access-Control-Allow-Origin`，這條路線**不需要 `worker.js`**。（`sta.ci.taiwan.gov.tw` 仍未知，見下方） |
 | 實測到的取樣間隔 | 裝置 `13580653094` 實際是**每 1 分鐘**一筆，不是資料集文件寫的 3 分鐘。取樣間隔一律以序列自身的中位數推算，不要寫死 3 分鐘 |
 | 實測到的 datastream 名稱（微型） | `PM2.5`、`Relative humidity`、`Temperature`（該站共 3 項）。注意濕度叫 **`Relative humidity`**，不是 `RH` |
-| 國家空品測站 endpoint | **不在這張表裡——這是高風險假設，見下一節。** |
+| 國家空品測站 endpoint | 路徑 `STA_AirQuality_v2/v1.0/`（官方 API 說明頁與 pyCIOT 一致，**pyCIOT 的資訊沒過期**）。<br>**主機要用 `sta.colife.org.tw`**：`https://sta.colife.org.tw/STA_AirQuality_v2/v1.0/` — 使用者 2026-08-19 於瀏覽器實測 200 OK 且 CORS 通。<br>官方文件寫的 `sta.ci.taiwan.gov.tw` 那台**從瀏覽器打不通**（`TypeError`），只能在伺服器端或 proxy 後面用 |
+| 國家測站的查法 | 官方範例是 authority 與 name 並用：`properties/authority eq '行政院環境保護署' and substringof('空氣品質測站',name)`；查特定站再 `and substringof('板橋',name)`。同一服務混有其他來源，**不能只靠 name** |
+| `authority` 的字串 | 仍是 `行政院環境保護署`（官方範例未隨 2023 年改制為環境部而更新） |
+| Thing 名稱格式（國家） | `空氣品質測站-<測站名>`，例如 `空氣品質測站-新莊` |
+| **資料保留期** | **兩個 STA endpoint 都只保留近期觀測值。** 實測微型感測器 `13580653094` 的 PM2.5：最舊 `2026-08-18T21:00:30Z`、最新 `23:00:30Z`、`@iot.count` = 121 — 整條序列只有**約 2 小時**。查再長的區間也拿不到更早的資料，完整歷史只能走 <https://history.colife.org.tw> |
 | 協定 | OGC SensorThings API v1.0 |
 | API key | **不需要** |
 | 資料集（微型） | 環境部「智慧城鄉空品微型感測器」，約 10,999 點，更新頻率 3 分鐘，2017 年 6 月起 |
@@ -59,114 +67,46 @@
 
 ---
 
-## 高風險假設（未經證實，且有明確的過期跡象）
+## 已解除的假設（保留紀錄，避免重蹈）
 
-### 國家空品測站的 endpoint
+### 國家空品測站的 endpoint（2026-08-19 解除）
 
-程式碼目前預設 `https://sta.ci.taiwan.gov.tw/STA_AirQuality_v2/v1.0/`，並以
-`properties/authority` 區分 `行政院環境保護署`＝國家測站、`中研院`＝校園微型感測器。
+曾把 `https://sta.ci.taiwan.gov.tw/STA_AirQuality_v2/v1.0/` 標為高風險假設，理由是
+它只出自 pyCIOT 1.1.0 的 `data_source.json`，而該檔的 `authority` 仍寫改制前的
+「行政院環境保護署」，看起來像兩年沒更新。
 
-**這是猜的，不是事實。** 唯一依據是官方套件 pyCIOT 1.1.0 的 `data_source.json`。
-而那份設定檔裡 `authority` 仍寫「行政院環境保護署」——環保署已於 2023 年 8 月改制為**環境部**，
-代表該設定檔至少兩年沒更新過。一份兩年沒更新的設定檔，裡面的 endpoint 同樣可能已經遷移、
-改版或停用。
+**實測後的結論是：路徑沒錯，錯的是主機，而且 `authority` 本來就該是舊名。**
 
-**2026-08-19 實測結果：加入「板橋」失敗，錯誤是 `TypeError`（fetch 層失敗）**，
-也就是瀏覽器連 `sta.ci.taiwan.gov.tw` 這台主機都沒成功——可能是該主機沒回 CORS 標頭，
-也可能是主機／路徑根本不存在。同一時間 `sta.colife.org.tw` 的請求是成功的，
-所以問題出在這個 endpoint，不是使用者的網路。**這強化了本節的判斷：這個 endpoint 不可信。**
-下一步是逐一探測候選 endpoint（`sta.colife.org.tw` 的 v2 鏡像、`STA_AirQuality_EPA` 等），
-確認哪一個既存在又允許跨來源。
+- 官方 API 說明頁（<https://ci.taiwan.gov.tw/dsp/Views/api_guide/STA_example.aspx>）
+  的範例同樣是 `STA_AirQuality_v2/v1.0/`，且 `authority` 也寫 `行政院環境保護署`。
+  pyCIOT 的資訊沒有過期，是**這個服務本身仍沿用舊機關名**。
+- 但 `sta.ci.taiwan.gov.tw` 這台主機**從瀏覽器連不上**（`TypeError`，四個候選路徑全失敗），
+  同時 `sta.colife.org.tw` 的同一路徑 200 OK。因此程式改打 colife 那台。
 
-因此在使用者提供實測確認的 endpoint 之前：
-
-- **不得把這個 endpoint 當成已知事實**，也不得以它為前提再往下推論（例如「因為 v2 收錄兩種來源，所以…」）。
-- `index.html` 裡它只是一個**可覆寫的預設值**，UI 上的 endpoint 欄位就是為此保留的。
-- 任何說明文字（README、UI、commit message）提到它時都要標明未經實測。
-- 拿到正確 endpoint 後：更新這一節、把它移進「已驗證的事實」、同步 README 與 `worker.js` 白名單，
-  並重新檢視下面第 2、3 項是否還成立。
+**教訓**：「設定檔看起來過期」不足以推斷 endpoint 失效，要分開驗證**路徑**與**主機**——
+這次兩者的答案不同。往後遇到類似情況，先探測再下結論，不要用一個間接跡象否定整條資訊。
 
 ---
 
 ## 未驗證，需要實測確認
 
-1. **CORS** — 最關鍵的未知數。兩台主機都要測：
+1. **國家空品測站的實際回應** — endpoint 與查法已確認可連（見「已驗證」），但**還沒真的加成功過一站**。
+   待覆核：`properties` 裡到底有哪些欄位（`stationName`？`stationID`？）、datastream 名稱字串
+   （`PM2.5`／`O3`／`AMB_TEMP`…）、以及下面第 2 項的時間格式。
 
-```bash
-   for h in sta.colife.org.tw/STA_AirQuality_EPAIoT sta.ci.taiwan.gov.tw/STA_AirQuality_v2; do
-     curl -sI -H "Origin: https://example.github.io" "https://$h/v1.0/Things?\$top=1" | grep -i access-control
-   done
-```
+2. **國家測站的 `phenomenonTime` 格式** — 小時值有可能是時間區間（`起/迄`）。
+   程式碼遇到含 `/` 的字串會取**區間起點**當時標；若實際是區間終點代表該小時，
+   時間軸會整體偏移一小時，需修正。
 
-   有輸出 → 直接部署 GitHub Pages 即可，`worker.js` 用不到。
-   無輸出 → 走 `worker.js` 路線（`worker.js` 的白名單目前只有 `sta.colife.org.tw` 與 `history.colife.org.tw`，
-   要用國家測站得把 `sta.ci.taiwan.gov.tw` 加進去）。
+3. **國家測站的資料保留期** — 微型感測器已實測只有約 2 小時（見「已驗證」）。
+   國家測站是小時值，如果保留期也是 2 小時，那**一次只拿得到 2–3 個點**，
+   疊圖與配對統計都會失去意義。加站時 UI 會顯示「可查詢範圍」，看那一行就知道。
+   若確認保留期同樣很短，`history.colife.org.tw` 路線就從「加分項」變成「必要功能」。
 
-2. **國家空品測站的 Thing 欄位** — 程式碼假設有 `properties.stationName`（測站名稱，如「板橋」）、
-   `properties.stationID`、`properties.authority`。比對順序：`stationName` → `name` → `stationID` → 名稱片段。
-   實測後若確認實際欄位名，請把命中的那個排第一，並把猜錯的移除。
-
-3. **`authority` 的字串** — 環保署 2023 年改制為環境部，pyCIOT 設定裡仍寫 `行政院環境保護署`。
-   程式碼「列出國家測站」按鈕依序試 `行政院環境保護署` → `環境部` → 不過濾，實測後可簡化。
-
-4. **國家測站的 `phenomenonTime` 格式** — 小時值有可能是時間區間（`起/迄`）。
-   程式碼遇到含 `/` 的字串會取**區間起點**當時標；若實際是區間終點代表該小時，時間軸會整體偏移一小時，需修正。
-
-5. **Datastream 清單** — 兩個來源各有哪些測項、`name` 字串長什麼樣（`PM2.5`／`O3`／`RH`／`AMB_TEMP`…）？
-   程式碼是加入測站後動態讀取後產生勾選清單，但沒看過真實回應。
-
-6. **7 天只出現 1 天的成因** — **三個候選成因，尚未確認是哪一個（也可能都不是）**：
-
-   | | 成因 | 現況 |
-   |---|---|---|
-   | A | 分頁請求被來源站限流（429／5xx），失敗的頁被靜默丟掉 | 已改成重試＋失敗計數，狀態列會出現「N 頁抓取失敗」 |
-   | B | 伺服器沒回 `@iot.count`，程式只取到第一頁 100 筆 | 已改成改跟 `@iot.nextLink` 逐頁走 |
-   | C | **STA endpoint 只保留近期觀測值，較舊的資料只在 <https://history.colife.org.tw>** | **完全沒處理，程式碼目前假設 STA 有完整歷史** |
-
-   **2026-08-19 實測（裝置 `13580653094`，選 3 天）：只拿到 164 筆、涵蓋 0.1 天，
-   最新一筆 08-19 06:43，取樣間隔 1 分鐘。** 164 > 單頁 100，代表程式有抓第二頁；
-   也就是**伺服器自己回報這個 3 天區間只有 164 筆**（`@iot.count`）。
-   因此 A（限流丟頁）與 B（只取第一頁）**都不是這次的成因**，
-   剩下兩種可能：C（endpoint 只留近期資料）或**該感測器本身在那 3 天大部分時間離線**。
-   兩者用下面的 curl／console 探測即可分辨：看該 datastream 的最舊一筆與總筆數。
-
-   A、B 是「修掉了但沒覆核」，C 是**還沒驗證也還沒處理**的可能性。
-   如果 C 成立，那麼不管分頁寫得多好，超過保留期的區間都不會有資料，
-   長區間必須改走 history 的批次下載，或在 UI 上明講可查詢的時間範圍。
-
-   **判別方式**（直接問該 datastream 最舊與最新的一筆）：
-
-```bash
-   BASE=https://sta.colife.org.tw/STA_AirQuality_EPAIoT/v1.0
-   Q=13580653094        # 裝置編號（stationID）
-
-   # 1) 由裝置編號取得 Thing id
-   TID=$(curl -sG "$BASE/Things" \
-     --data-urlencode "\$filter=properties/stationID eq '$Q'" | jq -r '.value[0]["@iot.id"]')
-
-   # 2) 取得 PM2.5 的 datastream id
-   DS=$(curl -sG "$BASE/Things($TID)/Datastreams" \
-     --data-urlencode "\$filter=name eq 'PM2.5'" | jq -r '.value[0]["@iot.id"]')
-
-   # 3) 最舊的一筆、最新的一筆、總筆數
-   curl -sG "$BASE/Datastreams($DS)/Observations" \
-     --data-urlencode "\$orderby=phenomenonTime asc"  --data-urlencode "\$top=1" \
-     --data-urlencode "\$select=phenomenonTime" | jq -r '.value[0].phenomenonTime'
-   curl -sG "$BASE/Datastreams($DS)/Observations" \
-     --data-urlencode "\$orderby=phenomenonTime desc" --data-urlencode "\$top=1" \
-     --data-urlencode "\$select=phenomenonTime" | jq -r '.value[0].phenomenonTime'
-   curl -sG "$BASE/Datastreams($DS)/Observations" \
-     --data-urlencode "\$count=true" --data-urlencode "\$top=1" | jq -r '.["@iot.count"]'
-```
-
-   判讀：
-
-   - 最舊一筆只到**幾天前**（總筆數也只有幾千）→ **成因 C 成立**：STA 只留近期資料。
-     此時要嘛把可選天數限制在保留期內，要嘛長區間改走 history.colife.org.tw。
-   - 最舊一筆是 **2017 年附近、總筆數上百萬** → C 不成立，回頭看狀態列：
-     有「N 頁抓取失敗」＝成因 A；沒有失敗卻只拿到 100 筆＝成因 B。
-   - 國家測站要一併測的話，把 `BASE` 換成國家測站 endpoint、`Q` 換成 stationID 再跑一次
-     （但那個 endpoint 本身還是高風險假設，見上一節）。
+4. **`sta.ci.taiwan.gov.tw` 連不通的原因** — 目前只知道瀏覽器 `TypeError`。
+   程式現在會用 `mode:"no-cors"` 再探一次來分辨「主機/路徑不存在」與「CORS 被擋」，
+   但那台主機的實際情形還沒回報過。若只是缺 CORS 標頭，`worker.js` 可以救；
+   若是主機不存在，就永久改用 colife。
 
 **確認完請把結果寫回這份 CLAUDE.md，把項目從「未驗證」移到「已驗證」。**
 
@@ -254,6 +194,12 @@
   這同時提供可分享／可加書籤的深連結。舊格式 `#device=<id>` 仍相容，一律視為微型感測器。
 - **兩個 endpoint**：`SOURCES.iot` / `SOURCES.epa` 各自對應一個輸入框，切換 tab 只換來源與提示文字。
   新增第三個來源就往 `SOURCES` 加一筆。
+- **資料保留期**：加站時 `probeRange()` 會問該 datastream 最舊／最新的一筆，存進 `st.range`，
+  UI 顯示「可查 …」。載入後若區間早於保留期，狀態列要明講是**保留期不足**，
+  不得再歸因成「抓取失敗」或「感測器離線」——這三者是不同的原因，訊息不可混用。
+- **fetch 失敗的歸因**：`TypeError` 分不出 CORS 與主機不存在，`diagnoseFailure()` 會用
+  `mode:"no-cors"` 再探一次：拿得到 opaque 回應＝CORS 被擋；仍失敗＝主機／路徑不通。
+  錯誤訊息要照這兩種情況給不同的修法。
 - **分頁**：`fetchSeries()` 先 `$count=true` 取總數再用 `$skip` 併發取；伺服器沒回 `@iot.count` 時
   改跟 `@iot.nextLink` 逐頁走。單頁失敗自動重試（**只對 429／5xx**；`TypeError`＝CORS／離線，重試沒意義）。
   仍失敗就計數並在狀態列標示。單序列頁數上限 `MAX_PAGES`。
@@ -270,18 +216,23 @@
 
 ## 待辦（依優先序）
 
-1. **修「來源間偏差」面板的方法學問題** — 見上方「下一輪必修」六項。這是目前最高優先，
-   因為那個面板現在會產出看起來可信、實際上有誤導性的數字。
-2. **取得並確認國家空品測站的正確 endpoint**（使用者提供），解除上方「高風險假設」。
-3. **實測 CORS**（兩台主機都要），依結果決定是否部署 `worker.js`，並更新 README 與 worker 白名單。
-4. **釐清 7 天問題的真因**（成因 A／B／C，判別 curl 見上方未驗證第 6 項）。
-   若成因 C 成立，要規劃 history.colife.org.tw 路線或限制可選天數。
+1. **history.colife.org.tw 批次下載路線** — STA 只留約 2 小時，這條沒做的話，
+   diurnal pattern、分層統計、兩測點比較全都只能看幾小時，專案的核心情境無法成立。
+   要先確認該站的檔案格式（CSV/ZIP、按日或按月）與是否允許跨來源。
+2. **修「來源間偏差」面板的方法學問題** — 見上方「下一輪必修」六項。
+   那個面板現在會產出看起來可信、實際上有誤導性的數字，在修好之前不得用於任何結論。
+3. **實測國家測站**：用「板橋」走完整流程，覆核回應欄位、時間格式與保留期（未驗證 1–3 項）。
+4. ~~取得國家空品測站 endpoint~~ — 已完成（colife 那台）。
+   ~~實測微型感測器 CORS~~ — 已完成（通，`worker.js` 用不到）。
+   ~~釐清 7 天問題~~ — 已完成（成因 C：保留期只有約 2 小時）。
 5. ~~平日 vs 假日、尖峰 vs 離峰的分層統計~~ — 已做（「分層統計」面板，`renderStrat()`）。
    統計單位是小時平均，`n` ＝有效小時數；尖峰＝台灣時間 07–09／17–19；
    **假日只認週六日，國定假日與補班日尚未納入**（要做得先內建假日表，或改抓行政院行事曆）。
    注意：這個面板的 `n` 同樣有自相關問題（同「下一輪必修」第 2、3 項），做那一輪時一併檢視。
-6. **長期資料累積**：目前每次都重新打 API。可考慮把抓過的觀測值寫入 Supabase（使用者已有帳號），
-   歷史資料不變動故可永久快取；累積數月後才有足夠樣本做 diurnal pattern 的統計檢定。
+6. **長期資料累積**：因為 STA 只留約 2 小時，這一項的價值比原本高得多——
+   定期把觀測值寫進 Supabase（使用者已有帳號），是除了 history 批次下載以外
+   唯一能累積歷史的辦法。歷史資料不變動故可永久快取；累積數月後才有足夠樣本做統計檢定。
+   需要排程（Supabase cron／GitHub Actions），純靜態網頁本身做不到。
 7. 無障礙檢查：鍵盤 focus 可見（已加 `:focus-visible`）、`prefers-reduced-motion`（已加）、
    圖表的文字替代（目前只有 `aria-label`，可考慮補一段統計摘要）。
 

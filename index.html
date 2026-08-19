@@ -202,7 +202,7 @@
           </label>
           <label class="field">
             <span>國家空品測站 endpoint</span>
-            <input type="text" id="endpointEpa" value="https://sta.ci.taiwan.gov.tw/STA_AirQuality_v2/v1.0">
+            <input type="text" id="endpointEpa" value="https://sta.colife.org.tw/STA_AirQuality_v2/v1.0">
           </label>
           <p class="hint">
             兩個資料集是不同的 STA 服務。國家測站那組（<code>STA_AirQuality_v2</code>）同時收錄環境部國家測站
@@ -420,9 +420,33 @@ const proxy   = () => $("proxy").value.trim();
 
 const isNetworkFailure = e => e instanceof TypeError;
 
-const CORS_FIX =
-  "多半是瀏覽器的跨來源限制。到「資料來源與 proxy 設定」填入 Cloudflare Worker 網址即可，" +
-  "repo 裡的 <code>worker.js</code> 直接貼上就能用。";
+/* fetch 失敗（TypeError）分不出「主機／路徑不存在」與「CORS 被擋」，
+   所以另外用 no-cors 探一次：能拿到 opaque 回應＝主機活著、是 CORS 被擋；
+   連 opaque 都拿不到＝主機或路徑根本不通。 */
+async function diagnoseFailure(url){
+  try {
+    await fetch(url, {mode:"no-cors", cache:"no-store"});
+    return "cors";
+  } catch (e){ return "unreachable"; }
+}
+
+async function reportFailure(msg, e, src){
+  if (!isNetworkFailure(e)){ setStatus(msg, "bad", "錯誤：" + escHtml(e.message)); return; }
+  setStatus(msg + "　診斷中…", "bad");
+  setStatus(msg, "bad", failFix(await diagnoseFailure(baseFor(src) + "/"), src));
+}
+
+function failFix(kind, src){
+  const other = src === "epa"
+    ? "sta.ci.taiwan.gov.tw／sta.colife.org.tw 互為鏡像，把「資料來源與 proxy 設定」裡的主機換另一台試試"
+    : "把「資料來源與 proxy 設定」裡的主機在 sta.colife.org.tw 與 sta.ci.taiwan.gov.tw 之間對調試試";
+  if (kind === "cors")
+    return "主機有回應，但<strong>沒有回 CORS 標頭</strong>，瀏覽器因此擋下結果。" +
+           "到「資料來源與 proxy 設定」填入 Cloudflare Worker 網址即可，repo 裡的 <code>worker.js</code> 直接貼上就能用；" +
+           "或者 " + other + "。";
+  return "<strong>連不到這台主機或這個路徑</strong>（DNS、憑證或路徑不存在，不是 CORS）。" +
+         "先確認 endpoint 拼字，再 " + other + "。";
+}
 
 /* 只對 429／5xx 重試（伺服器忙）；TypeError（CORS／離線）重試沒有意義，直接拋。 */
 async function api(url, signal, tries){
@@ -486,13 +510,13 @@ function mkStation(t, lat, lon, src){
 /* 寫進網址 hash 的識別字串 */
 function stationKey(s){
   return s.src === "epa"
-    ? (s.stationName || s.name || s.stationID)
+    ? (s.stationName || stationLabel(s) || s.stationID)   // 「空氣品質測站-板橋」→「板橋」，連結才短
     : (s.locationId || s.stationID || String(s.id));
 }
 
 function stationLabel(s){
   if (s.src === "epa")
-    return s.stationName || s.name.replace(/^(空氣品質監測站|國家空品測站)[-－:：]?/,"") || s.stationID || String(s.id);
+    return s.stationName || s.name.replace(/^(空氣品質測站|空氣品質監測站|國家空品測站)[-－:：]?/,"") || s.stationID || String(s.id);
   return s.area || s.township || s.name.replace("智慧城鄉空品微型感測器-","") || stationKey(s);
 }
 
@@ -501,15 +525,21 @@ const isHourly = d => d.cadenceMin >= 30;
 
 /* ===================== 解析測站 ===================== */
 
+/* 國家測站的官方查法（民生公共物聯網 API 說明頁）：authority 與 name 兩個條件並用，
+   Thing 的 name 形如「空氣品質測站-板橋」，同一服務內另有其他來源的資料需靠 authority 排除。 */
+const EPA_AUTHORITY = "行政院環境保護署";
+const EPA_NAME_TAG  = "空氣品質測站";
+
 function filtersFor(src, q){
   const e = esc(q);
   if (src === "epa") return [
+    `properties/authority eq '${EPA_AUTHORITY}' and substringof('${EPA_NAME_TAG}',name) and substringof('${e}',name)`,
+    `substringof('${EPA_NAME_TAG}',name) and substringof('${e}',name)`,
+    `name eq '${EPA_NAME_TAG}-${e}'`,
     `properties/stationName eq '${e}'`,
-    `name eq '${e}'`,
     `properties/stationID eq '${e}'`,
     `substringof('${e}',name)`,
-    `contains(name,'${e}')`,
-    `substringof('${e}',properties/stationName)`
+    `contains(name,'${e}')`
   ];
   return [
     `properties/locationId eq '${e}'`,
@@ -567,8 +597,7 @@ async function addDevice(q, src){
   let found;
   try { found = await resolveDevice(q, src); }
   catch (e){
-    setStatus("無法連線到" + SOURCES[src].label + "的資料來源。", "bad",
-              isNetworkFailure(e) ? CORS_FIX : "錯誤：" + escHtml(e.message));
+    await reportFailure("無法連線到" + SOURCES[src].label + "的資料來源。", e, src);
     $("addBtn").disabled = false;
     return;
   }
@@ -587,14 +616,15 @@ async function addDevice(q, src){
   $("deviceInput").value = "";
   renderPicked();
 
-  try { await loadStreams(s); }
+  try { await loadStreams(s); await probeRange(s); }
   catch (e){ /* 測項清單讀不到不擋流程，載入時還會再讀一次 */ }
   renderParams();
   renderPicked();
 
   const extra = found.length > 1 ? `（另有 ${found.length-1} 筆符合，取第一筆）` : "";
   const sTxt = s.streams.length ? `，可用測項 ${s.streams.length} 項` : "";
-  setStatus(`已加入「${escHtml(stationLabel(s))}」${extra}${sTxt}。勾選測項後按「載入觀測資料」。`);
+  const rTxt = s.range ? `，可查詢範圍 ${rangeText(s.range)}` : "";
+  setStatus(`已加入「${escHtml(stationLabel(s))}」${extra}${sTxt}${rTxt}。勾選測項後按「載入觀測資料」。`);
   syncHash();
 }
 
@@ -603,8 +633,11 @@ async function listEpaStations(){
   const b = baseFor("epa");
   $("listEpaBtn").disabled = true;
   setStatus("讀取國家空品測站清單…", "busy");
+  // 官方 API 說明頁的查法：authority 與 name 並用（同一服務混有其他來源的資料）
   const tries = [
-    "properties/authority eq '行政院環境保護署'",
+    `properties/authority eq '${EPA_AUTHORITY}' and substringof('${EPA_NAME_TAG}',name)`,
+    `properties/authority eq '${EPA_AUTHORITY}'`,
+    `substringof('${EPA_NAME_TAG}',name)`,
     "properties/authority eq '環境部'",
     null
   ];
@@ -619,7 +652,7 @@ async function listEpaStations(){
       if (list.length) break;
     }
   } catch (e){
-    setStatus("無法連線到國家空品測站的資料來源。", "bad", isNetworkFailure(e) ? CORS_FIX : escHtml(e.message));
+    await reportFailure("無法連線到國家空品測站的資料來源。", e, "epa");
     $("listEpaBtn").disabled = false;
     return;
   }
@@ -672,8 +705,7 @@ async function findNearby(){
       return (loc.Things || []).map(t => mkStation(t, c[1], c[0], "iot"));
     });
   } catch (e){
-    setStatus(isNetworkFailure(e) ? "無法連線到資料來源。" : "空間查詢失敗：" + escHtml(e.message),
-              "bad", isNetworkFailure(e) ? CORS_FIX : "");
+    await reportFailure(isNetworkFailure(e) ? "無法連線到資料來源。" : "空間查詢失敗。", e, "iot");
     $("findBtn").disabled = false;
     return;
   }
@@ -723,7 +755,8 @@ function renderPicked(){
       <span>
         <span class="st-name">${escHtml(stationLabel(s))}</span><span class="badge ${s.src}">${SOURCES[s.src].badge}</span><br>
         <span class="st-meta">${escHtml(s.locationId || s.stationID || s.name)}${s.township ? " · " + escHtml(s.township) : (s.city ? " · " + escHtml(s.city) : "")}${
-          s.streams.length ? " · " + s.streams.length + " 測項" : ""}</span>
+          s.streams.length ? " · " + s.streams.length + " 測項" : ""}${
+          s.range ? "<br>可查 " + escHtml(rangeText(s.range)) : ""}</span>
       </span>
       <button class="rm" data-i="${i}" aria-label="移除 ${escHtml(stationLabel(s))}">&times;</button>
     </div></li>`).join("");
@@ -794,9 +827,15 @@ function updateLoadHint(){
       reqs += Math.max(1, Math.ceil(perDay*days / PAGE_SIZE));
     });
   });
-  $("loadHint").innerHTML = series
+  const short = picked.filter(s => s.range && (s.range.newest - s.range.oldest) < days*864e5*0.8);
+  const shortTxt = short.length
+    ? `<br><strong style="color:var(--warn)">注意：${short.map(s => `「${escHtml(stationLabel(s))}」只保留 ${
+        escHtml(fmtSpan(s.range.newest - s.range.oldest))}`).join("、")}的資料，選 ${days} 天也只會拿到這麼多；` +
+      `更早的要走 <a href="https://history.colife.org.tw" target="_blank" rel="noopener">history.colife.org.tw</a> 批次下載。</strong>`
+    : "";
+  $("loadHint").innerHTML = (series
     ? `預計 ${series} 條序列、約 ${reqs} 次請求（併發上限 ${CONCURRENCY}）。序列多或天數長會比較久。`
-    : "勾選的測項在已加入的測站上都不存在，載入會沒有資料。";
+    : "勾選的測項在已加入的測站上都不存在，載入會沒有資料。") + shortTxt;
 }
 
 /* ===================== 讀觀測值 ===================== */
@@ -852,9 +891,41 @@ function medianStepMin(points){
   return d[Math.floor(d.length/2)] / 60e3;
 }
 
+/* 這兩個 STA endpoint 只保留近期觀測值（實測：微型感測器約 2 小時）。
+   先問出該 datastream 最舊／最新的一筆，之後才能把「沒資料」歸因到保留期而不是分頁失敗。 */
+async function probeRange(st){
+  const ds = st.streams.find(d => /^PM2\.5$/i.test(d.name)) || st.streams[0];
+  if (!ds) return;
+  const b = baseFor(st.src), O = `/Datastreams(${ds.id})/Observations`;
+  const q = dir => b + O + "?$top=1&$select=phenomenonTime&$orderby=" +
+                   encodeURIComponent("phenomenonTime " + dir);
+  try {
+    const [a, z] = await Promise.all([api(q("asc"), null, 1), api(q("desc"), null, 1)]);
+    const oldest = parseMs((a.value || [])[0] && a.value[0].phenomenonTime);
+    const newest = parseMs((z.value || [])[0] && z.value[0].phenomenonTime);
+    if (oldest !== null && newest !== null) st.range = {oldest, newest, param: ds.name};
+  } catch (e){ /* 探測失敗不擋流程，只是少一項診斷資訊 */ }
+}
+
+function fmtStamp(ms){
+  const d = tpe(ms);
+  return `${String(d.getUTCMonth()+1).padStart(2,"0")}-${String(d.getUTCDate()).padStart(2,"0")} ` +
+         `${String(d.getUTCHours()).padStart(2,"0")}:${String(d.getUTCMinutes()).padStart(2,"0")}`;
+}
+
+function fmtSpan(ms){
+  const h = ms/3600e3;
+  return h >= 48 ? (h/24).toFixed(1) + " 天" : h.toFixed(1) + " 小時";
+}
+
+function rangeText(r){
+  return `${fmtStamp(r.oldest)} ～ ${fmtStamp(r.newest)}（約 ${fmtSpan(r.newest - r.oldest)}）`;
+}
+
 async function loadObservations(){
   if (!picked.length) return;
   const days = parseInt($("days").value,10);
+  let failSrc = "iot";
   const endLocal = $("endDate").value;
   if (!endLocal){ setStatus("請先選結束日。", "warn"); return; }
   const endUTC = new Date(endLocal + "T00:00:00Z").getTime() + 24*3600e3 - 8*3600e3;
@@ -872,6 +943,7 @@ async function loadObservations(){
   try {
     for (const st of picked){
       const b = baseFor(st.src), lbl = stationLabel(st);
+      failSrc = st.src;
       if (!st.streams.length){
         setStatus(`「${escHtml(lbl)}」：查詢 datastream…`, "busy");
         try { await loadStreams(st); }
@@ -881,6 +953,14 @@ async function loadObservations(){
           continue;
         }
         renderParams();
+      }
+
+      if (!st.range) await probeRange(st);
+      // 來源保留期比要求的區間短，先講清楚，之後的「涵蓋不足」才不會被誤讀成抓取失敗
+      if (st.range && st.range.oldest > startUTC + 3600e3){
+        warns.push(`「${lbl}」：這個來源只保留 ${rangeText(st.range)}的觀測值，` +
+                   `比要求的 ${days} 天短。更早的資料要走 history.colife.org.tw 批次下載，API 拿不到。`);
+        renderPicked();
       }
 
       const jobs = st.streams.filter(d => selectedParams.has(d.name));
@@ -914,19 +994,22 @@ async function loadObservations(){
 
         if (res.failed) warns.push(`「${lbl}」${ds.name}：${res.failed} 頁抓取失敗，資料不完整`);
         if (res.capped) warns.push(`「${lbl}」${ds.name}：超過單序列 ${MAX_PAGES} 頁上限，只取回前段`);
+        const retained = st.range && st.range.oldest > startUTC + 3600e3;   // 保留期就比要求短
         if (uniq.length){
           const cov = (uniq[uniq.length-1].ms - uniq[0].ms) / 864e5;
-          if (cov < days*0.8)
-            warns.push(`「${lbl}」${ds.name}：實際只涵蓋 ${cov.toFixed(1)} 天（要求 ${days} 天），該區間可能離線或伺服器未回完整分頁`);
+          if (cov < days*0.8 && !retained && !res.failed)
+            warns.push(`「${lbl}」${ds.name}：實際只涵蓋 ${cov.toFixed(1)} 天（要求 ${days} 天），` +
+                       `這段期間感測器可能離線——來源本身有 ${st.range ? rangeText(st.range) : "更長"} 的資料`);
         } else {
-          warns.push(`「${lbl}」${ds.name}：區間內沒有有效觀測值`);
+          warns.push(`「${lbl}」${ds.name}：${retained
+            ? "要求的區間早於來源的保留期，所以一筆都沒有"
+            : "區間內沒有有效觀測值（感測器離線或該測項無資料）"}`);
         }
       }
     }
   } catch (e){
     if (e.name === "AbortError") return;
-    setStatus(isNetworkFailure(e) ? "連線中斷。" : "載入失敗：" + escHtml(e.message),
-              "bad", isNetworkFailure(e) ? CORS_FIX : "");
+    await reportFailure(isNetworkFailure(e) ? "連線中斷。" : "載入失敗。", e, failSrc || "iot");
     $("loadBtn").disabled = false;
     return;
   }
@@ -1416,7 +1499,9 @@ function blandAltman(pairs, d, ref){
 
 /* 濕度分層：RH 取自該微型感測器自身的 datastream（濕度是已知的干擾因子） */
 function rhStrata(pairs, d){
-  const rh = dataset.find(x => x.station.uid === d.station.uid && /^(RH|humidity|相對濕度)$/i.test(x.param) && x.points.length);
+  // 實測到的名稱是「Relative humidity」，不是 RH
+  const rh = dataset.find(x => x.station.uid === d.station.uid &&
+    /^(rh|relative\s*humidity|humidity|相對濕度|濕度)$/i.test(x.param) && x.points.length);
   if (!rh)
     return `<p class="hint" style="margin:4px 0 0">想看濕度分層的話，把該微型感測器的 RH 測項一起勾選再載入一次。</p>`;
 
