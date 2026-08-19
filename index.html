@@ -58,6 +58,7 @@
 
   .tabs{display:grid;grid-template-columns:1fr 1fr;gap:0;margin-bottom:12px;border:1px solid var(--rule-strong);border-radius:2px;overflow:hidden}
   .tab{background:#fff;color:var(--ink-2);border:none;border-radius:0;font-size:12.5px;font-weight:500;padding:8px 6px;line-height:1.3}
+  .tabs-3{grid-template-columns:1fr 1fr 1fr}
   .tab + .tab{border-left:1px solid var(--rule-strong)}
   .tab:hover{background:var(--accent-soft);color:var(--accent)}
   .tab.on{background:var(--accent);color:#fff;font-weight:600}
@@ -163,10 +164,16 @@
       <section class="panel primary">
         <p class="panel-title">加入測站</p>
 
-        <div class="tabs" role="group" aria-label="資料來源">
-          <button type="button" class="tab on" id="tabIot" aria-pressed="true">微型感測器<small>3 分鐘 · 裝置編號</small></button>
-          <button type="button" class="tab" id="tabEpa" aria-pressed="false">國家空品測站<small>每小時 · 測站名稱</small></button>
+        <div class="tabs tabs-3" role="group" aria-label="資料來源">
+          <button type="button" class="tab on" id="tabIot" aria-pressed="true">微型感測器<small>3 分鐘 · 編號</small></button>
+          <button type="button" class="tab" id="tabMoenv" aria-pressed="false">國家測站<small>77 站 · 近 4 天</small></button>
+          <button type="button" class="tab" id="tabEpa" aria-pressed="false">國家測站 STA<small>66 站 · 近 2 小時</small></button>
         </div>
+
+        <label class="field" id="moenvKeyBox" style="display:none">
+          <span>環境部開放資料 api_key（<strong>必填</strong>；不會存進瀏覽器，也不會寫進網址）</span>
+          <input type="text" id="moenvKey" placeholder="到 data.moenv.gov.tw 註冊後取得" autocomplete="off" spellcheck="false">
+        </label>
 
         <label class="field">
           <span id="inputLabel">裝置編號（不是裝置名稱）</span>
@@ -194,10 +201,6 @@
             需要註冊取得 api_key。按下方按鈕會實測 CORS、是否需要 key、以及歷史資料集
             <code>aqx_p_488</code> 能不能取到時間序列——確認可行才值得接進來。
           </p>
-          <label class="field">
-            <span>api_key（只在這次操作使用，不會存進瀏覽器，也不會寫進網址）</span>
-            <input type="text" id="moenvKey" placeholder="留空也可以試，看它是否強制要求" autocomplete="off" spellcheck="false">
-          </label>
           <div class="btn-row"><button id="moenvBtn" class="ghost">測試環境部開放資料</button></div>
         </details>
 
@@ -225,8 +228,12 @@
             <input type="text" id="endpoint" value="https://sta.colife.org.tw/STA_AirQuality_EPAIoT/v1.0">
           </label>
           <label class="field">
-            <span>國家空品測站 endpoint</span>
+            <span>國家空品測站 endpoint（SensorThings）</span>
             <input type="text" id="endpointEpa" value="https://sta.colife.org.tw/STA_AirQuality_v2/v1.0">
+          </label>
+          <label class="field">
+            <span>環境部開放資料 endpoint</span>
+            <input type="text" id="endpointMoenv" value="https://data.moenv.gov.tw/api/v2">
           </label>
           <p class="hint">
             兩個資料集是不同的 STA 服務。國家測站那組（<code>STA_AirQuality_v2</code>）同時收錄環境部國家測站
@@ -376,7 +383,23 @@ const MAX_STATIONS  = 3;
 const CONCURRENCY   = 4;      // 同時對來源站的請求數上限
 const MAX_PAGES     = 200;    // 單一序列的分頁上限，避免失控迴圈
 const PAGE_SIZE     = 100;    // 伺服器單頁上限
-const BUILD         = "2026-08-19h";   // 版本標記，診斷輸出與頁尾都會顯示，用來確認是否讀到新版
+const BUILD         = "2026-08-20a";   // 版本標記，診斷輸出與頁尾都會顯示，用來確認是否讀到新版
+
+/* 環境部開放資料的欄位 → 本頁的測項名稱。PM2.5 用同一個名稱，才能跟微型感測器疊在同一張圖。
+   實測欄位：aqx_p_488 用 windspeed／datacreationdate，aqx_p_432 用 wind_speed／publishtime。 */
+const MOENV_FIELDS = [
+  {key:"pm2.5",     name:"PM2.5",          unit:"µg/m³"},
+  {key:"pm2.5_avg", name:"PM2.5 移動平均", unit:"µg/m³"},
+  {key:"pm10",      name:"PM10",           unit:"µg/m³"},
+  {key:"o3",        name:"O3",             unit:"ppb"},
+  {key:"o3_8hr",    name:"O3 8hr",         unit:"ppb"},
+  {key:"no2",       name:"NO2",            unit:"ppb"},
+  {key:"so2",       name:"SO2",            unit:"ppb"},
+  {key:"co",        name:"CO",             unit:"ppm"},
+  {key:"aqi",       name:"AQI",            unit:""},
+  {key:"windspeed", alt:"wind_speed", name:"風速", unit:"m/s"}
+];
+const moenvField = (rec, f) => rec[f.key] !== undefined ? rec[f.key] : rec[f.alt];
 
 const SOURCES = {
   iot: {
@@ -389,8 +412,18 @@ const SOURCES = {
        + '<code>TW040203A0506884</code>（locationId）。<strong>這是裝置編號，不是裝置名稱</strong>，'
        + '輸入「中山國小」之類的地點名稱查不到。'
   },
+  moenv: {
+    key:"moenv", label:"國家空品測站（環境部開放資料）", badge:"環境部",
+    cadence:60, endpointEl:"endpointMoenv", demo:"板橋",
+    inputLabel:"測站名稱",
+    placeholder:"板橋",
+    hint:'環境部環境資料開放平臺（data.gov.tw 資料集 40448），**全部 77 站都有，含板橋、土城**，'
+       + '每小時一筆、可回溯約 <strong>4 天</strong>（比下一個分頁的 STA 好很多）。'
+       + '需要 api_key：到 <a href="https://data.moenv.gov.tw" target="_blank" rel="noopener">data.moenv.gov.tw</a> '
+       + '註冊會員後取得，貼在上方欄位。金鑰不會被儲存，關掉頁面就要重貼。'
+  },
   epa: {
-    key:"epa", label:"國家空品測站", badge:"國站",
+    key:"epa", label:"國家空品測站 STA", badge:"STA",
     cadence:60, endpointEl:"endpointEpa", demo:"板橋",
     inputLabel:"測站名稱",
     placeholder:"板橋",
@@ -551,7 +584,7 @@ function countyOf(s){
 
 /* 寫進網址 hash 的識別字串 */
 function stationKey(s){
-  return s.src === "epa"
+  return (s.src === "epa" || s.src === "moenv")
     ? (s.stationName || stationLabel(s) || s.stationID)   // 「空氣品質測站-板橋」→「板橋」，連結才短
     : (s.locationId || s.stationID || String(s.id));
 }
@@ -615,6 +648,10 @@ function matchEpa(list, q){
 
 async function resolveDevice(q, src){
   const b = baseFor(src);
+  if (src === "moenv"){
+    const list = await fetchMoenvStations();
+    return matchEpa(list, q);          // 比對邏輯相同：站名、stationID、properties 全搜
+  }
   if (src === "epa"){
     let list = [];
     try { list = await fetchEpaStations(); }
@@ -638,6 +675,7 @@ async function resolveDevice(q, src){
 }
 
 async function loadStreams(st){
+  if (st.src === "moenv") return;      // 測項在建立測站物件時就從欄位推導好了
   const url = baseFor(st.src) + `/Things(${st.id})/Datastreams?$top=100&$select=name,description,unitOfMeasurement,@iot.id`;
   const js = await api(url, null, 2);
   st.streams = (js.value || []).map(d => ({
@@ -659,6 +697,13 @@ async function addDevice(q, src){
   let found;
   try { found = await resolveDevice(q, src); }
   catch (e){
+    if (e instanceof MissingKeyError){
+      setStatus("環境部開放資料需要 api_key。", "warn",
+        "到 <a href=\"https://data.moenv.gov.tw\" target=\"_blank\" rel=\"noopener\">data.moenv.gov.tw</a> " +
+        "註冊會員取得後，貼進上方的 api_key 欄位再試一次。金鑰不會被儲存。");
+      $("addBtn").disabled = false;
+      return;
+    }
     await reportFailure("無法連線到" + SOURCES[src].label + "的資料來源。", e, src);
     $("addBtn").disabled = false;
     return;
@@ -675,7 +720,10 @@ async function addDevice(q, src){
                       : "按「列出國家測站」看實際有哪些站。")
         : "確認是<strong>裝置編號</strong>而不是裝置名稱，或改用座標搜尋。");
     // 查無時直接把可用的替代站列出來，不要讓使用者卡在死路
-    if (src === "epa" && epaCache && epaCache.length) renderEpaBrowser(refPoint() ? NEAR_KEY : undefined);
+    if (src === "epa" || src === "moenv"){
+      browseSrc = src;
+      if (browseCache().length) renderEpaBrowser(refPoint() ? NEAR_KEY : undefined);
+    }
     return;
   }
   const s = found[0];
@@ -695,6 +743,116 @@ async function addDevice(q, src){
   const rTxt = s.range ? `，可查詢範圍 ${rangeText(s.range)}` : "";
   setStatus(`已加入「${escHtml(stationLabel(s))}」${extra}${sTxt}${rTxt}。勾選測項後按「載入觀測資料」。`);
   syncHash();
+}
+
+/* ===================== 環境部開放資料（data.moenv.gov.tw） ===================== */
+
+/* 與 SensorThings 完全不同的一支 API：需要 api_key、回應最外層是陣列、
+   時間欄位已經是台灣時間（沒有時區標記），所以解析方式也不同。
+   金鑰只放在記憶體與請求網址，不寫進 hash、不進 localStorage、不經過 proxy 前綴。 */
+const moenvKey  = () => $("moenvKey").value.trim();
+const moenvBase = () => $("endpointMoenv").value.trim().replace(/\/$/,"");
+
+let moenvCache = null;   // aqx_p_432 的全站快照，用來當測站清單
+
+class MissingKeyError extends Error {}
+
+async function moenvGet(ds, params, tries){
+  const key = moenvKey();
+  if (!key) throw new MissingKeyError("需要 api_key");
+  const url = moenvBase() + "/" + ds + "?" +
+    new URLSearchParams(Object.assign({format:"JSON", api_key:key}, params)).toString();
+  let last;
+  for (let a = 0; a < (tries || 2); a++){
+    if (a) await sleep(600 * a);
+    const r = await fetch(url, {headers:{Accept:"application/json"}});
+    if (r.ok){
+      const js = await r.json();
+      return Array.isArray(js) ? js : (js.records || js.data || []);
+    }
+    last = new Error("HTTP " + r.status);
+    if (!(r.status === 429 || r.status >= 500)) throw last;
+  }
+  throw last;
+}
+
+/* 「2026-08-20 05:00」／「2026/08/20 05:00:00」都是**台灣時間**（回應沒有時區標記），
+   本頁內部一律存 UTC epoch，所以要當成 +08:00 解析，不能直接 Date.parse。 */
+function parseMoenvTime(s){
+  const t = String(s || "").trim().replace(/\//g, "-").replace(" ", "T");
+  if (!t) return null;
+  const full = t.length === 16 ? t + ":00" : t;          // 補秒
+  const ms = Date.parse(full + "+08:00");
+  return Number.isFinite(ms) ? ms : null;
+}
+
+const moenvNum = v => {
+  const n = Number(String(v == null ? "" : v).trim());
+  return Number.isFinite(n) ? n : null;     // ""、"ND"、"-" 一律視為無效值，不補值
+};
+
+function moenvStation(rec){
+  const id = rec.siteid || rec.sitename;
+  return {
+    src:"moenv", id, uid:"moenv:" + id,
+    locationId:"", stationID: String(rec.siteid || ""),
+    stationName: rec.sitename || "",
+    name: rec.sitename || String(id),
+    authority:"環境部", city: rec.county || "", township:"", area:"",
+    props: rec,
+    lat: Number(rec.latitude), lon: Number(rec.longitude),
+    streams: MOENV_FIELDS.filter(f => moenvField(rec, f) !== undefined)
+                         .map(f => ({id: f.key, alt: f.alt, name: f.name, unit: f.unit}))
+  };
+}
+
+async function fetchMoenvStations(){
+  if (moenvCache) return moenvCache;
+  const recs = await moenvGet("aqx_p_432", {limit:"1000"});
+  const seen = new Set();
+  moenvCache = recs.map(moenvStation).filter(s => !seen.has(s.uid) && seen.add(s.uid));
+  return moenvCache;
+}
+
+/* 觀測值：aqx_p_488 是每小時一筆的歷史資料（實測可回溯約 4 天）。
+   一次把該站的紀錄抓回來，再依所選測項拆成多條序列——不逐測項重打，省請求數。 */
+async function loadMoenvStation(st, days, startUTC, endUTC, warns){
+  const lbl = stationLabel(st);
+  const want = Math.ceil((endUTC - startUTC)/3600e3) + 48;
+  setStatus(`「${escHtml(lbl)}」：讀取環境部開放資料…`, "busy");
+  const recs = await moenvGet("aqx_p_488", {
+    limit: String(Math.min(Math.max(want, 100), 1000)),
+    filters: "sitename,EQ," + st.stationName,
+    sort: "datacreationdate desc"
+  });
+
+  const rows = recs.map(r => ({ms: parseMoenvTime(r.datacreationdate || r.publishtime), rec: r}))
+                   .filter(x => x.ms !== null)
+                   .sort((a,b) => a.ms - b.ms);
+  if (!rows.length){ warns.push(`「${lbl}」：開放資料沒有回傳可用的紀錄`); return; }
+
+  st.range = {oldest: rows[0].ms, newest: rows[rows.length-1].ms, param:"（全測項）"};
+
+  const jobs = st.streams.filter(d => selectedParams.has(d.name));
+  if (!jobs.length){
+    warns.push(`「${lbl}」沒有勾選中的測項（該站可用：${st.streams.map(d => d.name).join("、")}）`);
+    return;
+  }
+  for (const ds of jobs){
+    const points = rows
+      .filter(x => x.ms >= startUTC && x.ms <= endUTC)
+      .map(x => { const raw = x.rec[ds.id] !== undefined ? x.rec[ds.id] : x.rec[ds.alt];
+                  const v = moenvNum(raw);
+                  return v === null || v < 0 ? null : {...taipeiParts(x.ms), value: v}; })
+      .filter(Boolean);
+    dataset.push({station: st, param: ds.name, unit: ds.unit, points, cadenceMin: medianStepMin(points) || 60});
+    if (!points.length)
+      warns.push(`「${lbl}」${ds.name}：所選區間內沒有有效值（該站可查 ${rangeText(st.range)}）`);
+  }
+  if (st.range.oldest > startUTC + 3600e3)
+    warns.push(`「${lbl}」：開放資料只回溯到 ${fmtStamp(st.range.oldest)}（約 ${
+      fmtSpan(st.range.newest - st.range.oldest)}），比要求的 ${days} 天短`);
+  renderPicked();
 }
 
 /* ===================== 國家測站清單 ===================== */
@@ -768,11 +926,14 @@ function nearestEpa(ref, k){
 
 const NEAR_KEY = "＿最近";   // 縣市 chip 裡代表「依距離排序」的虛擬分類
 
-/* 兩段式：先選縣市，再選測站；authority 只是可選的縮小條件，預設不篩掉任何站 */
+/* 兩段式：先選縣市，再選測站；authority 只是可選的縮小條件，預設不篩掉任何站。
+   同一套 UI 供兩個國家測站來源使用，browseSrc 決定目前列的是哪一個。 */
 let epaAuthorityPick = "";
+let browseSrc = "epa";
+const browseCache = () => browseSrc === "moenv" ? (moenvCache || []) : (epaCache || []);
 
 function renderEpaBrowser(county){
-  const box = $("browseList"), all = epaCache || [];
+  const box = $("browseList"), all = browseCache();
   if (!all.length){
     box.innerHTML = '<p class="hint" style="margin:6px 0 0">endpoint 沒有回傳測站。確認「國家空品測站 endpoint」是否正確。</p>';
     return;
@@ -834,7 +995,7 @@ function renderEpaBrowser(county){
   box.querySelectorAll('input[name=county]').forEach(r =>
     r.addEventListener("change", () => renderEpaBrowser(r.value)));
   box.querySelectorAll("button[data-q]").forEach(btn =>
-    btn.addEventListener("click", () => addDevice(btn.dataset.q, "epa")));
+    btn.addEventListener("click", () => addDevice(btn.dataset.q, browseSrc)));
 }
 
 /* 探測環境部開放資料平臺（data.moenv.gov.tw）：這是與 SensorThings 不同的另一支 API，
@@ -971,17 +1132,32 @@ async function runEpaDiag(){
 }
 
 async function listEpaStations(){
+  browseSrc = curSrc === "moenv" ? "moenv" : "epa";
   $("listEpaBtn").disabled = true;
-  setStatus("讀取國家空品測站清單…", "busy");
-  try { await fetchEpaStations((d,n) => setStatus(`讀取測站清單… ${d}/${n} 頁`, "busy")); }
+  setStatus("讀取測站清單…", "busy");
+  try {
+    if (browseSrc === "moenv"){
+      await fetchMoenvStations();
+      epaMeta = {total: (moenvCache || []).length, capped: false, filter: "aqx_p_432 全站快照"};
+    } else {
+      await fetchEpaStations((d,n) => setStatus(`讀取測站清單… ${d}/${n} 頁`, "busy"));
+    }
+  }
   catch (e){
-    await reportFailure("無法連線到國家空品測站的資料來源。", e, "epa");
+    if (e instanceof MissingKeyError){
+      setStatus("環境部開放資料需要 api_key。", "warn",
+        "到 <a href=\"https://data.moenv.gov.tw\" target=\"_blank\" rel=\"noopener\">data.moenv.gov.tw</a> " +
+        "註冊會員取得後，貼進上方的 api_key 欄位再試一次。");
+      $("listEpaBtn").disabled = false;
+      return;
+    }
+    await reportFailure("無法連線到測站清單的資料來源。", e, browseSrc);
     $("listEpaBtn").disabled = false;
     return;
   }
   $("listEpaBtn").disabled = false;
   renderEpaBrowser();
-  const n = (epaCache || []).length;
+  const n = browseCache().length;
   setStatus(n ? `清單共 ${n} 站（伺服器回報 ${epaMeta.total} 筆，取回方式：${escHtml(epaMeta.filter)}），` +
                 "先選縣市再挑測站；不同資料提供單位可用上方下拉選單縮小。"
               : "國家測站清單是空的。",
@@ -1205,6 +1381,7 @@ function medianStepMin(points){
 /* 這兩個 STA endpoint 只保留近期觀測值（實測：微型感測器約 2 小時）。
    先問出該 datastream 最舊／最新的一筆，之後才能把「沒資料」歸因到保留期而不是分頁失敗。 */
 async function probeRange(st){
+  if (st.src === "moenv") return;      // 範圍在載入觀測值後才確定（見 loadMoenvStation）
   const ds = st.streams.find(d => /^PM2\.5$/i.test(d.name)) || st.streams[0];
   if (!ds) return;
   const b = baseFor(st.src), O = `/Datastreams(${ds.id})/Observations`;
@@ -1255,6 +1432,10 @@ async function loadObservations(){
     for (const st of picked){
       const b = baseFor(st.src), lbl = stationLabel(st);
       failSrc = st.src;
+      if (st.src === "moenv"){
+        await loadMoenvStation(st, days, startUTC, endUTC, warns);
+        continue;
+      }
       if (!st.streams.length){
         setStatus(`「${escHtml(lbl)}」：查詢 datastream…`, "busy");
         try { await loadStreams(st); }
@@ -1320,6 +1501,12 @@ async function loadObservations(){
     }
   } catch (e){
     if (e.name === "AbortError") return;
+    if (e instanceof MissingKeyError){
+      setStatus("環境部開放資料需要 api_key，這一站沒有載入。", "warn",
+        "把金鑰貼進「國家測站」分頁上方的欄位再按一次載入。");
+      $("loadBtn").disabled = false;
+      return;
+    }
     await reportFailure(isNetworkFailure(e) ? "連線中斷。" : "載入失敗。", e, failSrc || "iot");
     $("loadBtn").disabled = false;
     return;
@@ -1897,16 +2084,19 @@ async function loadFromHash(){
 function setSource(src){
   curSrc = src;
   const cfg = SOURCES[src];
-  $("tabIot").classList.toggle("on", src === "iot");
-  $("tabEpa").classList.toggle("on", src === "epa");
-  $("tabIot").setAttribute("aria-pressed", String(src === "iot"));
-  $("tabEpa").setAttribute("aria-pressed", String(src === "epa"));
+  ["iot","moenv","epa"].forEach(k => {
+    const btn = $("tab" + k.charAt(0).toUpperCase() + k.slice(1));
+    btn.classList.toggle("on", src === k);
+    btn.setAttribute("aria-pressed", String(src === k));
+  });
+  $("moenvKeyBox").style.display = src === "moenv" ? "" : "none";
   $("inputLabel").textContent = cfg.inputLabel;
   $("deviceInput").placeholder = cfg.placeholder;
   $("addHint").innerHTML = cfg.hint;
-  $("listEpaBtn").style.display = src === "epa" ? "" : "none";
+  $("listEpaBtn").style.display = (src === "epa" || src === "moenv") ? "" : "none";
+  $("listEpaBtn").textContent = src === "moenv" ? "列出測站" : "列出國家測站";
   $("diagBtn").style.display = src === "epa" ? "" : "none";
-  $("moenvBox").style.display = src === "epa" ? "" : "none";
+  $("moenvBox").style.display = (src === "epa" || src === "moenv") ? "" : "none";
   $("browseList").innerHTML = "";
   $("diagOut").style.display = "none";
   $("diagBar").style.display = "none";
@@ -1923,6 +2113,7 @@ function setSource(src){
 
   $("tabIot").addEventListener("click", () => setSource("iot"));
   $("tabEpa").addEventListener("click", () => setSource("epa"));
+  $("tabMoenv").addEventListener("click", () => setSource("moenv"));
   $("addBtn").addEventListener("click", () => addDevice($("deviceInput").value));
   $("deviceInput").addEventListener("keydown", e => { if (e.key === "Enter") addDevice(e.target.value); });
   $("demoBtn").addEventListener("click", () => {
