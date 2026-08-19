@@ -376,7 +376,7 @@ const MAX_STATIONS  = 3;
 const CONCURRENCY   = 4;      // 同時對來源站的請求數上限
 const MAX_PAGES     = 200;    // 單一序列的分頁上限，避免失控迴圈
 const PAGE_SIZE     = 100;    // 伺服器單頁上限
-const BUILD         = "2026-08-19g";   // 版本標記，診斷輸出與頁尾都會顯示，用來確認是否讀到新版
+const BUILD         = "2026-08-19h";   // 版本標記，診斷輸出與頁尾都會顯示，用來確認是否讀到新版
 
 const SOURCES = {
   iot: {
@@ -852,10 +852,17 @@ async function moenvProbe(){
   push("頁面版本", BUILD);
   push("api_key", key ? "有填（輸出已遮蔽）" : "未填（測試是否強制要求）");
 
+  // 實測：這支 API 最外層直接回陣列，不是 {records:[...]}
+  const recordsOf = js => Array.isArray(js) ? js
+                        : (js && (js.records || js.data)) || null;
+  const timeOf = r => r.datacreationdate || r.monitordate || r.publishtime || r.datetime || "";
+
   const cases = [
-    ["aqx_p_432 最新一小時（全站）", mk("aqx_p_432", {})],
-    ["aqx_p_432 只取板橋",          mk("aqx_p_432", {filters:"sitename,EQ,板橋"})],
-    ["aqx_p_488 歷史資料（板橋）",   mk("aqx_p_488", {filters:"sitename,EQ,板橋", sort:"datacreationdate desc"})]
+    ["aqx_p_432 最新一小時（板橋）", mk("aqx_p_432", {limit:"5", filters:"sitename,EQ,板橋"})],
+    ["aqx_p_488 歷史（板橋，取 100 筆）",
+      mk("aqx_p_488", {limit:"100", filters:"sitename,EQ,板橋", sort:"datacreationdate desc"})],
+    ["aqx_p_488 不排序（板橋，取 100 筆）",
+      mk("aqx_p_488", {limit:"100", filters:"sitename,EQ,板橋"})]
   ];
 
   for (const [label, url] of cases){
@@ -865,17 +872,33 @@ async function moenvProbe(){
       const txt = await r.text();
       let js = null;
       try { js = JSON.parse(txt); } catch (e){}
-      const recs = (js && (js.records || js.data)) || null;
+      const recs = recordsOf(js);
       push(label, "HTTP " + r.status +
-        (Array.isArray(recs) ? "｜取回 " + recs.length + " 筆" : "｜回應不是預期的 records 結構") +
+        (Array.isArray(recs) ? "｜取回 " + recs.length + " 筆" : "｜無法解析成陣列") +
         (js && js.total !== undefined ? "｜total " + js.total : ""));
       if (Array.isArray(recs) && recs.length){
         push(label + " 欄位", Object.keys(recs[0]).join(", "));
+        const times = recs.map(timeOf).filter(Boolean).sort();
+        const uniq = [...new Set(times)];
+        if (uniq.length){
+          push(label + " 時間範圍", uniq[0] + " ～ " + uniq[uniq.length-1] +
+            "｜相異時間點 " + uniq.length + " 個");
+          const gaps = [];
+          for (let i = 1; i < uniq.length; i++){
+            const d = (Date.parse(uniq[i].replace(" ", "T")) - Date.parse(uniq[i-1].replace(" ", "T")))/60e3;
+            if (isFinite(d)) gaps.push(d);
+          }
+          if (gaps.length){
+            gaps.sort((a,b) => a-b);
+            push(label + " 相鄰時間間隔中位數", gaps[Math.floor(gaps.length/2)] + " 分鐘");
+          }
+          push(label + " 最新 3 個時間", uniq.slice(-3).join(" ｜ "));
+        } else {
+          push(label + " 時間欄位", "找不到（欄位名可能不同，看上面的欄位清單）");
+        }
         push(label + " 第一筆", "\n" + JSON.stringify(recs[0], null, 1));
-        const times = recs.map(x => x.datacreationdate || x.monitordate || x.publishtime).filter(Boolean);
-        if (times.length) push(label + " 時間欄位樣本", times.join(" ｜ "));
       } else {
-        push(label + " 原始回應（前 300 字）", mask(txt).slice(0, 300));
+        push(label + " 原始回應（前 400 字）", mask(txt).slice(0, 400));
       }
     } catch (e){
       push(label, "fetch 失敗（" + ((e && e.message) || e) + "）→ 多半是 CORS 被擋，" +
