@@ -1,0 +1,75 @@
+name: 回填 history 歷史資料（手動）
+
+# 為什麼要有這個：微型感測器的 API 只留約 2 小時，跨日資料只在 history.colife.org.tw
+# 的每日 ZIP 裡，而那些檔案每天每測項約 176 MB 且不允許跨來源存取，瀏覽器做不到。
+# 在這裡下載、解壓、篩出指定裝置，輸出成小檔 commit 進 repo，網頁再以同源方式讀取。
+
+on:
+  workflow_dispatch:
+    inputs:
+      start:
+        description: "起始日 YYYYMMDD"
+        required: true
+      until:
+        description: "結束日 YYYYMMDD（含當天；留空＝只做起始日）"
+        required: false
+      param:
+        description: "檔名裡的測項代碼，例如 humidity、pm25"
+        required: true
+        default: "humidity"
+      label:
+        description: "輸出欄位名稱（要與網頁的測項名一致，例如 PM2.5、Relative humidity）"
+        required: true
+        default: "Relative humidity"
+      devices:
+        description: "裝置編號，逗號分隔"
+        required: true
+        default: "13580653094"
+      tz:
+        description: "來源時間欄位的時區（dry-run 確認後再填）"
+        required: true
+        default: "taipei"
+        type: choice
+        options: ["taipei", "utc"]
+      dry_run:
+        description: "只探勘結構、不寫檔（第一次請用 true）"
+        required: true
+        default: true
+        type: boolean
+
+permissions:
+  contents: write
+
+jobs:
+  backfill:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 執行萃取
+        run: |
+          set -euo pipefail
+          ARGS=(--date "${{ inputs.start }}" --param "${{ inputs.param }}")
+          [ -n "${{ inputs.until }}" ] && ARGS+=(--until "${{ inputs.until }}")
+          if [ "${{ inputs.dry_run }}" = "true" ]; then
+            ARGS+=(--dry-run)
+          else
+            ARGS+=(--devices "${{ inputs.devices }}" --tz "${{ inputs.tz }}" \
+                   --label "${{ inputs.label }}" --out data)
+          fi
+          python3 scripts/hist_extract.py "${ARGS[@]}"
+
+      - name: 有變動才 commit
+        if: ${{ inputs.dry_run == false }}
+        run: |
+          set -euo pipefail
+          if git diff --quiet -- data; then
+            echo "data/ 沒有變動，不提交"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data
+          git commit -m "回填 history 資料：${{ inputs.start }}~${{ inputs.until || inputs.start }} ${{ inputs.label }}"
+          git push

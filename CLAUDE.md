@@ -243,14 +243,22 @@
 
 ## 待辦（依優先序）
 
-1. **history.colife.org.tw 批次下載路線**（進行中） — STA 只留約 2 小時，這條沒做的話，
+1. **history.colife.org.tw → GitHub Actions 預處理**（進行中） — STA 只留約 2 小時，這條沒做的話，
    diurnal pattern、分層統計、兩測點比較全都只能看幾小時，專案的核心情境無法成立。
    **階段 A（已做）**：微型感測器分頁加了「探測 history.colife.org.tw」，
    貼上任一檔案網址即可回報 HTTP 狀態、Content-Type／Length、前 16 bytes（辨識 ZIP／gzip／CSV）、
    CSV 的前 5 行與欄位名，並用 `diagnoseFailure()` 分辨 CORS 被擋與主機不通。
    只讀前 2 KB 就 abort（不用 Range 標頭，避免 preflight 造成誤判）。
-   **階段 B（待偵察結果）**：CORS 通就新增 `hist` 來源直接抓（串流解析＋`DecompressionStream` 解壓，
-   不引入函式庫）；被擋就把 `history.colife.org.tw` 加進 `worker.js` 白名單走 proxy。
+   **階段 A 的實測結果（2026-08-20）**：
+   - 下載網址：`https://history.colife.org.tw/?r=/download&path=<base64 路徑>`，
+     路徑為 `/空氣品質/環境部_智慧城鄉空品微型感測器/YYYYMM/moenviot_<測項>_<YYYYMMDD>.zip`
+   - **按「測項 × 日」分檔，每檔約 176 MB**；**CORS 被擋**（主機有回應但無 CORS 標頭）
+   - → 7 天 PM2.5 就是 1.2 GB，加濕度 2.4 GB。**瀏覽器直抓不可行，原計畫作廢。**
+   **階段 B（改為伺服器端預處理，已實作）**：`scripts/hist_extract.py` 由 GitHub Actions
+   下載→解壓→篩出指定裝置→輸出 `data/iot/<裝置>/<YYYY-MM>.csv`（寬表）與 `data/manifest.json`，
+   網頁再以**同源**方式讀取（無 CORS、無金鑰、手機可用）。
+   兩個 workflow：`hist-backfill.yml`（手動回填，含 dry-run）、`hist-daily.yml`（每日增量）。
+   **待辦**：跑一次 dry-run 確認 ZIP 內欄位與時區、確認 PM2.5 的檔名代碼、前端讀取與合併。
    完整計畫見 `/root/.claude/plans/history-colife-org-tw-swift-cupcake.md`。
    **時效**：搜尋顯示民生公共物聯網計畫已於 2025-12-31 結束、資料服務**只提供到 2026-12-01**，
    之後轉移平台（未向官方求證）。這條路線有到期日，也提高了第 6 項自行累積的價值。

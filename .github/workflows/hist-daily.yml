@@ -1,0 +1,50 @@
+name: 每日增量抓取 history 資料
+
+# history 站約在台灣時間 03:00 產出前一日的檔案，這裡排在台灣時間 05:00（UTC 21:00）。
+# 想改抓哪些裝置／測項，直接改下面的 env。
+
+on:
+  schedule:
+    - cron: "0 21 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  DEVICES: "13580653094"
+  TZ_SOURCE: "taipei"          # 由 dry-run 對照 API 確認後填入，不可用猜的
+
+jobs:
+  daily:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 抓前一天（各測項）
+        run: |
+          set -euo pipefail
+          DATE=$(date -u -d "yesterday" +%Y%m%d)
+          echo "處理日期（台灣時間的前一天）：$DATE"
+          # param=檔名代碼；label=網頁上的測項名稱，兩者必須對得起來
+          run_one () {
+            python3 scripts/hist_extract.py --date "$DATE" --param "$1" --label "$2" \
+              --devices "$DEVICES" --tz "$TZ_SOURCE" --out data
+          }
+          run_one humidity "Relative humidity"
+          # TODO: dry-run 確認 PM2.5 的檔名代碼後打開下面這行
+          # run_one pm25 "PM2.5"
+
+      - name: 有變動才 commit
+        run: |
+          set -euo pipefail
+          if git diff --quiet -- data; then
+            echo "data/ 沒有變動，不提交"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data
+          git commit -m "每日增量：$(date -u -d yesterday +%Y-%m-%d)"
+          git push
