@@ -204,6 +204,22 @@
           <div class="btn-row"><button id="moenvBtn" class="ghost">測試環境部開放資料</button></div>
         </details>
 
+        <details id="histBox" style="display:none">
+          <summary>跨日資料：探測 history.colife.org.tw</summary>
+          <p class="hint" style="margin-top:8px">
+            微型感測器的 API 只保留最近約 2 小時。完整歷史在
+            <a href="https://history.colife.org.tw" target="_blank" rel="noopener">history.colife.org.tw</a>
+            以檔案打包提供。<strong>我還不知道那些檔案的網址規則與格式</strong>，所以先探測：
+            到該站找到「智慧城鄉空品微型感測器」的任一檔案，在下載連結上按右鍵複製網址貼進來。
+            探測只會讀取前 2 KB 就中止，不會下載整包。
+          </p>
+          <label class="field">
+            <span>檔案網址</span>
+            <input type="text" id="histUrl" placeholder="https://history.colife.org.tw/... " autocomplete="off" spellcheck="false">
+          </label>
+          <div class="btn-row"><button id="histBtn" class="ghost">探測這個網址</button></div>
+        </details>
+
         <details>
           <summary>改用座標找附近的微型感測器</summary>
           <label class="field" style="margin-top:10px">
@@ -385,7 +401,7 @@ const MAX_STATIONS  = 3;
 const CONCURRENCY   = 4;      // 同時對來源站的請求數上限
 const MAX_PAGES     = 200;    // 單一序列的分頁上限，避免失控迴圈
 const PAGE_SIZE     = 100;    // 伺服器單頁上限
-const BUILD         = "2026-08-20b";   // 版本標記，診斷輸出與頁尾都會顯示，用來確認是否讀到新版
+const BUILD         = "2026-08-20c";   // 版本標記，診斷輸出與頁尾都會顯示，用來確認是否讀到新版
 
 /* 環境部開放資料的欄位 → 本頁的測項名稱。PM2.5 用同一個名稱，才能跟微型感測器疊在同一張圖。
    實測欄位：aqx_p_488 用 windspeed／datacreationdate，aqx_p_432 用 wind_speed／publishtime。 */
@@ -998,6 +1014,72 @@ function renderEpaBrowser(county){
     r.addEventListener("change", () => renderEpaBrowser(r.value)));
   box.querySelectorAll("button[data-q]").forEach(btn =>
     btn.addEventListener("click", () => addDevice(btn.dataset.q, browseSrc)));
+}
+
+/* 探測 history.colife.org.tw：這個站的網址規則與檔案格式目前完全未知，
+   所以先讀前 2 KB 判斷格式（ZIP／gzip／CSV）與檔案大小，再決定怎麼實作。
+   用「串流讀到 2 KB 就 abort」而不是 Range 標頭——Range 不在 CORS 安全清單裡，
+   會觸發 preflight，可能讓其實抓得到的站誤判成失敗。 */
+async function histProbe(){
+  const url = $("histUrl").value.trim();
+  if (!url){ setStatus("先貼上一個 history 站的檔案網址。", "warn"); return; }
+
+  const out = [], push = (k, v) => out.push(k + "：" + v);
+  $("histBtn").disabled = true;
+  setStatus("探測 history 站…（只讀前 2 KB）", "busy");
+  push("頁面版本", BUILD);
+  push("測試網址", url);
+
+  try {
+    const ctl = new AbortController();
+    const r = await fetch(url, {signal: ctl.signal});
+    push("HTTP 狀態", r.status);
+    push("Content-Type", r.headers.get("Content-Type") || "（未提供）");
+    const len = r.headers.get("Content-Length");
+    push("Content-Length", len ? len + " bytes（約 " + (Number(len)/1048576).toFixed(1) + " MB）" : "（未提供）");
+    push("Accept-Ranges", r.headers.get("Accept-Ranges") || "（未提供，可能不支援分段下載）");
+    push("Content-Disposition", r.headers.get("Content-Disposition") || "（未提供）");
+
+    const reader = r.body.getReader();
+    const chunks = []; let got = 0;
+    while (got < 2048){
+      const {done, value} = await reader.read();
+      if (done) break;
+      chunks.push(value); got += value.length;
+    }
+    try { await ctl.abort(); } catch (e){}
+    const buf = new Uint8Array(got);
+    let off = 0; chunks.forEach(c => { buf.set(c, off); off += c.length; });
+    push("實際讀取", got + " bytes 後中止");
+    push("前 16 bytes（hex）", [...buf.slice(0,16)].map(b => b.toString(16).padStart(2,"0")).join(" "));
+
+    let kind;
+    if (buf[0] === 0x50 && buf[1] === 0x4B) kind = "ZIP（PK 開頭）——解壓要用 DecompressionStream('deflate-raw')";
+    else if (buf[0] === 0x1f && buf[1] === 0x8b) kind = "gzip——解壓要用 DecompressionStream('gzip')";
+    else kind = "純文字（很可能是 CSV）";
+    push("研判格式", kind);
+
+    if (kind.startsWith("純文字")){
+      const txt = new TextDecoder("utf-8").decode(buf);
+      const lines = txt.split(/\r?\n/);
+      push("前 5 行", "\n" + lines.slice(0, 5).join("\n"));
+      push("第一行的欄位（以逗號切）", (lines[0] || "").split(",").map(x => x.trim()).join(" | "));
+    } else {
+      push("備註", "二進位格式，前 2 KB 看不出欄位；解壓後才知道。把這段回報給我即可。");
+    }
+  } catch (e){
+    push("fetch 失敗", (e && e.message) || String(e));
+    const kind = await diagnoseFailure(url);
+    push("判別", kind === "cors"
+      ? "主機有回應，但沒有回 CORS 標頭 → 瀏覽器不能直接抓，要走 worker.js 代理（白名單需加 history.colife.org.tw）"
+      : "連不到這台主機或這個路徑 → 網址可能不正確，或該站根本不接受瀏覽器的跨來源請求");
+  }
+
+  $("histBtn").disabled = false;
+  $("diagOut").textContent = out.join("\n\n");
+  $("diagOut").style.display = "block";
+  $("diagBar").style.display = "flex";
+  setStatus("探測完成，請把下方內容整段複製或截圖回報。");
 }
 
 /* 探測環境部開放資料平臺（data.moenv.gov.tw）：這是與 SensorThings 不同的另一支 API，
@@ -2095,6 +2177,7 @@ function setSource(src){
     btn.setAttribute("aria-pressed", String(src === k));
   });
   $("moenvKeyBox").style.display = src === "moenv" ? "" : "none";
+  $("histBox").style.display = src === "iot" ? "" : "none";
   $("inputLabel").textContent = cfg.inputLabel;
   $("deviceInput").placeholder = cfg.placeholder;
   $("addHint").innerHTML = cfg.hint;
@@ -2128,6 +2211,7 @@ function setSource(src){
   $("listEpaBtn").addEventListener("click", listEpaStations);
   $("diagBtn").addEventListener("click", runEpaDiag);
   $("moenvBtn").addEventListener("click", moenvProbe);
+  $("histBtn").addEventListener("click", histProbe);
   $("diagCopy").addEventListener("click", () => {
     navigator.clipboard.writeText($("diagOut").textContent)
       .then(() => setStatus("診斷結果已複製，貼回對話即可。"))

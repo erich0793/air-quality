@@ -243,9 +243,17 @@
 
 ## 待辦（依優先序）
 
-1. **history.colife.org.tw 批次下載路線** — STA 只留約 2 小時，這條沒做的話，
+1. **history.colife.org.tw 批次下載路線**（進行中） — STA 只留約 2 小時，這條沒做的話，
    diurnal pattern、分層統計、兩測點比較全都只能看幾小時，專案的核心情境無法成立。
-   要先確認該站的檔案格式（CSV/ZIP、按日或按月）與是否允許跨來源。
+   **階段 A（已做）**：微型感測器分頁加了「探測 history.colife.org.tw」，
+   貼上任一檔案網址即可回報 HTTP 狀態、Content-Type／Length、前 16 bytes（辨識 ZIP／gzip／CSV）、
+   CSV 的前 5 行與欄位名，並用 `diagnoseFailure()` 分辨 CORS 被擋與主機不通。
+   只讀前 2 KB 就 abort（不用 Range 標頭，避免 preflight 造成誤判）。
+   **階段 B（待偵察結果）**：CORS 通就新增 `hist` 來源直接抓（串流解析＋`DecompressionStream` 解壓，
+   不引入函式庫）；被擋就把 `history.colife.org.tw` 加進 `worker.js` 白名單走 proxy。
+   完整計畫見 `/root/.claude/plans/history-colife-org-tw-swift-cupcake.md`。
+   **時效**：搜尋顯示民生公共物聯網計畫已於 2025-12-31 結束、資料服務**只提供到 2026-12-01**，
+   之後轉移平台（未向官方求證）。這條路線有到期日，也提高了第 6 項自行累積的價值。
 2. **修「來源間偏差」面板的方法學問題** — 見上方「下一輪必修」六項。
    那個面板現在會產出看起來可信、實際上有誤導性的數字，在修好之前不得用於任何結論。
 3. **實測國家測站**：用「板橋」走完整流程，覆核回應欄位、時間格式與保留期（未驗證 1–3 項）。
