@@ -257,8 +257,21 @@
    **階段 B（改為伺服器端預處理，已實作）**：`scripts/hist_extract.py` 由 GitHub Actions
    下載→解壓→篩出指定裝置→輸出 `data/iot/<裝置>/<YYYY-MM>.csv`（寬表）與 `data/manifest.json`，
    網頁再以**同源**方式讀取（無 CORS、無金鑰、手機可用）。
-   兩個 workflow：`hist-backfill.yml`（手動回填，含 dry-run）、`hist-daily.yml`（每日增量）。
-   **待辦**：跑一次 dry-run 確認 ZIP 內欄位與時區、確認 PM2.5 的檔名代碼、前端讀取與合併。
+   兩個 workflow：`hist-backfill.yml`（手動回填，五種模式）、`hist-daily.yml`（每日增量）。
+   **階段 B 的實測結果（2026-08-21／22，由 Actions 實跑）**：
+   - **ZIP 內只有一個 CSV**，約 809 MB、**13,741,955 列／天**（全國所有裝置混在一起）。
+     表頭 `stationID, Relative humidity, phenomenonTime, StationLongitude, StationLatitude`，
+     資料例 `13580653094, 73.46, 2026-08-19 00:00:00, 121.124306, 25.062393`。
+     欄位自動偵測的結果正確，不需要 `--col-*`。
+   - **目標裝置 `13580653094` 每天剛好 1440 列**＝每分鐘一筆，與 API 實測的取樣間隔一致。
+   - **檔名裡的測項代碼只有 `humidity`、`pm25`、`temperature` 三個**（正好對應該裝置的三個
+     datastream）。`pm2.5`、`pm2_5`、`PM25`、`PM2.5`、`pm10`、`temp`、`voc`、`co2` 都**回 HTTP 200
+     但內容是 HTML 錯誤頁**——站方不回 404，代碼猜錯會靜默抓到錯的東西，所以一定要先用
+     `--probe` 確認回的開頭是不是 `504b0304`（ZIP）。
+   - **`phenomenonTime` 沒有時區標記**，見下方「未驗證」第 6 項，判定完成前不得當成已知。
+   **踩過的坑（不要重蹈）**：`git diff --quiet -- data` 看不到**未追蹤**的檔案。
+   `data/` 第一次產生時全是未追蹤檔，兩次排程執行其實都成功萃取了 1440 列，
+   卻都被判成「沒有變動」而丟掉。判斷有無產出要用 `git status --porcelain`。
    完整計畫見 `/root/.claude/plans/history-colife-org-tw-swift-cupcake.md`。
    **時效**：搜尋顯示民生公共物聯網計畫已於 2025-12-31 結束、資料服務**只提供到 2026-12-01**，
    之後轉移平台（未向官方求證）。這條路線有到期日，也提高了第 6 項自行累積的價值。
