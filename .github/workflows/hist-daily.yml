@@ -51,6 +51,24 @@ jobs:
           run_one pm25 "PM2.5"
           run_one humidity "Relative humidity"
 
+      # 來源的時間欄位沒有時區標記，猜錯整條歷史會偏 8 小時。
+      # 昨天存的 API 快照（phenomenonTime 明確是 UTC）今天才有對應的 history 檔可比，
+      # 所以判定只能隔天做。判定成功會寫下 CONFIRMED，之後這一步就自動跳過。
+      - name: 時區判定（尚未確認時才跑）
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          if [ -f data/_tzcheck/CONFIRMED ]; then
+            echo "時區已確認（$(head -1 data/_tzcheck/CONFIRMED)），跳過"
+            exit 0
+          fi
+          if ! ls data/_tzcheck/*.json >/dev/null 2>&1; then
+            echo "還沒有 API 快照可比對，跳過"
+            exit 0
+          fi
+          python3 scripts/hist_extract.py --tz-check --devices "$DEVICES" \
+            --param humidity --label "Relative humidity" --skip-missing --out data
+
       - name: 有變動才 commit
         run: |
           set -euo pipefail

@@ -556,7 +556,24 @@ def main():
         return
 
     dates = []
-    if a.from_file:
+    if a.tz_check and not a.date and not a.from_file:
+        # 沒指定日期時，從快照自己推出要比對哪一天的檔案。
+        # 兩種時區解讀會落在不同日期，兩邊都試（多抓一天總比判不出來好）。
+        snapdir = os.path.join(a.out, "_tzcheck")
+        want = set()
+        for fn in sorted(os.listdir(snapdir)) if os.path.isdir(snapdir) else []:
+            if not fn.endswith(".json"):
+                continue
+            with open(os.path.join(snapdir, fn), encoding="utf-8") as f:
+                for iso, _ in json.load(f).get("observations") or []:
+                    t = datetime.fromisoformat(iso.replace("Z", "+00:00"))
+                    want.add(t.strftime("%Y%m%d"))
+                    want.add(t.astimezone(TPE).strftime("%Y%m%d"))
+        if not want:
+            ap.error("--tz-check 沒給 --date，也找不到任何 API 快照（%s）" % snapdir)
+        dates = sorted(want)
+        log("依快照推出要比對的日期：%s" % "、".join(dates))
+    elif a.from_file:
         dates = [None]
     elif a.date:
         d0 = datetime.strptime(a.date, "%Y%m%d")
