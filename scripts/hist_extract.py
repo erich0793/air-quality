@@ -582,6 +582,17 @@ def main():
             probe_params(date, codes)
         return
 
+    # 換了時區解讀又不清掉舊檔，兩種解讀的列會以不同時間並存在同一個 CSV 裡，
+    # 看起來像有資料、實際上錯了一半。這種情況要大聲失敗。
+    mpath = os.path.join(a.out, "manifest.json")
+    if a.tz and os.path.exists(mpath):
+        prev = json.load(open(mpath, encoding="utf-8")).get("source_tz")
+        if prev and prev != a.tz:
+            log("!! 既有資料是以 --tz %s 產生的，這次卻指定 --tz %s。" % (prev, a.tz))
+            log("!! 兩種解讀混在同一個檔案裡會造成一半的列時間錯誤。")
+            log("!! 要改時區請先刪掉 %s/iot 再重跑完整回填。" % a.out)
+            sys.exit(6)
+
     label = a.label or a.param
     total_rows = 0
     for date in dates:
