@@ -289,8 +289,10 @@ def scan_raw(zpath: str, devices, param_label: str, param_code: str, cols):
                         if 0 <= h < 24:
                             all_sum[h] += val
                             all_n[h] += 1
-                    if row[di].strip() in raw:
-                        raw[row[di].strip()][s] = val
+                    # 以「分」為鍵：history 的秒數並不固定（實測有 :00 也有 :29、:38），
+                    # API 那側的秒數也不固定，兩邊只有到分鐘才對得起來。
+                    if row[di].strip() in raw and len(s) >= 16:
+                        raw[row[di].strip()][s[:16]] = val
     return (all_sum, all_n), raw
 
 
@@ -352,8 +354,8 @@ def tz_check(zpath: str, devices, label: str, code: str, cols, snapdir: str):
             t = datetime.fromisoformat(iso.replace("Z", "+00:00"))
             found = False
             for tzname, shifted in (("utc", t), ("taipei", t.astimezone(TPE))):
-                # history 是整分鐘（秒為 00），API 實測是 :30，所以比對到「分」為止
-                key = shifted.strftime("%Y-%m-%d %H:%M:00")
+                # 兩邊的秒數都不固定，所以只比對到「分」
+                key = shifted.strftime("%Y-%m-%d %H:%M")
                 if key in table:
                     found = True
                     if abs(table[key] - float(val)) < 0.51:

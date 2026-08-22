@@ -1569,8 +1569,8 @@ async function histPoints(device, param, startUTC, endUTC){
   return out.sort((a,b) => a.ms - b.ms);
 }
 
-/* history 是整分鐘（秒固定為 00），API 的秒數不固定（實測 :30／:38），
-   但兩邊是同一批量測，所以以「分鐘」為鍵去重；重疊處以 API 為準（API 是直接來源）。 */
+/* 兩邊的秒數都不固定（history 實測有 :00 也有 :29、:38；API 實測 :30／:38），
+   但那是同一批量測，所以以「分鐘」為鍵去重；重疊處以 API 為準（API 是直接來源）。 */
 function mergeByMinute(hist, api){
   const byMin = new Map();
   for (const p of hist) byMin.set(Math.floor(p.ms/60000), p);
