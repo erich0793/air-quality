@@ -18,20 +18,30 @@
 
 | 檔案 | 狀態 |
 |---|---|
-| `index.html` | 單檔靜態網頁，兩個資料來源（微型感測器＋國家空品測站），多測項疊圖 |
-| `worker.js` | Cloudflare Worker CORS proxy，備援用，尚未部署 |
+| `index.html` | 單檔靜態網頁，三個資料來源（微型感測器、國家測站 STA、環境部開放資料），多測項疊圖 |
+| `scripts/hist_extract.py` | 從 history 站萃取指定裝置的歷史觀測值（只用標準函式庫） |
+| `.github/workflows/hist-backfill.yml` | 手動回填／探測，五種模式 |
+| `.github/workflows/hist-daily.yml` | 每日增量（台灣時間 05:00）＋ 存 API 快照 ＋ 自動時區判定 |
+| `data/` | 上面兩個 workflow 的產出，網頁以同源方式讀取 |
+| `worker.js` | Cloudflare Worker CORS proxy，備援用，尚未部署（目前三個來源都不需要） |
 | `README.md` | 部署與使用說明 |
 
-部署目標：GitHub Pages（純靜態，無 build step）。
+部署目標：GitHub Pages（純靜態，無 build step；`data/` 是 workflow 的產出，不是 build）。
 
 **驗證狀態**：微型感測器路線由使用者在真實瀏覽器實測可用（裝置編號 `13580653094`）。
 國家測站 endpoint 已實測可連（`sta.colife.org.tw` 那台），但**還沒真的加成功過一站**，
 回應欄位與時間格式待覆核。「來源間偏差」面板有已知的方法學問題，
 **在「下一輪必修」處理完之前，那個面板的數字不得用於任何結論**。
 
-**最重要的現實限制：兩個 STA endpoint 都只保留最近幾小時的觀測值**（微型感測器實測約 2 小時）。
-「往前天數」選再多也拿不到更早的資料——這不是程式的 bug，是資料來源的設計。
-長區間必須走 <https://history.colife.org.tw> 的批次下載，那條路線還沒做。
+**最重要的現實限制：三個 API 都只保留近期觀測值**（微型感測器與 STA 實測約 2 小時，
+環境部開放資料約 4 天）。「往前天數」選再多，**API 那一段**也拿不到更早的資料
+——這不是程式的 bug，是資料來源的設計。
+
+**微型感測器的跨日資料已經解決**：由 GitHub Actions 事先從
+<https://history.colife.org.tw> 萃取成 `data/` 裡的小 CSV，網頁同源讀取後與 API 的
+近 2 小時合併。`13580653094` 已回填 2026-08-08～21 的 PM2.5 與 Relative humidity。
+**但來源時間欄位的時區只有推論、尚未逐筆驗證**（見「未驗證」第 6 項）——
+`manifest.json` 的 `source_tz_verified` 變成 true 之前，歷史那一段有整體偏 8 小時的可能。
 
 ---
 
