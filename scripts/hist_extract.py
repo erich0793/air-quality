@@ -27,7 +27,7 @@
       --devices 13580653094 --tz taipei --out data
 """
 
-import argparse, base64, csv, io, json, os, sys, tempfile, urllib.parse, urllib.request, zipfile
+import argparse, base64, csv, io, json, os, sys, tempfile, time, urllib.parse, urllib.request, zipfile
 from datetime import datetime, timedelta, timezone
 
 BASE = "https://history.colife.org.tw"
@@ -65,6 +65,7 @@ def download(url: str, dest: str) -> int:
         "Accept": "*/*",
     })
     total = 0
+    t0 = time.time()
     with urllib.request.urlopen(req, timeout=300) as r, open(dest, "wb") as f:
         while True:
             chunk = r.read(1 << 20)
@@ -73,7 +74,10 @@ def download(url: str, dest: str) -> int:
             f.write(chunk)
             total += len(chunk)
             if total % (32 << 20) < (1 << 20):
-                log("  已下載 %.0f MB" % (total / 1048576))
+                dt = time.time() - t0
+                # 一併印吞吐量：站方限速跟連線卡死看起來都是「很久沒動」，
+                # 有 MB/s 才分得出來是哪一種。
+                log("  已下載 %.0f MB（%.1f MB/s）" % (total / 1048576, total / 1048576 / max(dt, 1e-6)))
     return total
 
 
