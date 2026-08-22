@@ -22,24 +22,38 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: 抓前一天（各測項）
+      - name: 存 API 快照（供時區驗證，且過了就再也拿不到）
+        continue-on-error: true
         run: |
           set -euo pipefail
-          DATE=$(date -u -d "yesterday" +%Y%m%d)
-          echo "處理日期（台灣時間的前一天）：$DATE"
+          python3 scripts/hist_extract.py --api-snapshot --devices "$DEVICES" \
+            --label "Relative humidity" --out data
+
+      - name: 抓前兩天（各測項）
+        run: |
+          set -euo pipefail
+          # runner 是 UTC，這裡要的是「台灣時間」的日期，所以先 +8 小時再算。
+          # 抓兩天而不是一天：站方約在台灣時間 03:00 才放上前一日的檔案，
+          # 萬一延遲就會整天漏掉；寫入本來就以時間去重，重複抓不會有副作用。
+          FROM=$(date -u -d "+8 hours -2 days" +%Y%m%d)
+          TO=$(date -u -d "+8 hours -1 day" +%Y%m%d)
+          echo "處理台灣時間 $FROM ～ $TO"
           # param=檔名代碼；label=網頁上的測項名稱，兩者必須對得起來
           run_one () {
-            python3 scripts/hist_extract.py --date "$DATE" --param "$1" --label "$2" \
+            python3 scripts/hist_extract.py --date "$FROM" --until "$TO" \
+              --param "$1" --label "$2" --skip-missing \
               --devices "$DEVICES" --tz "$TZ_SOURCE" --out data
           }
           run_one humidity "Relative humidity"
-          # TODO: dry-run 確認 PM2.5 的檔名代碼後打開下面這行
+          # TODO: 用回填 workflow 的「探測有哪些測項代碼」確認 PM2.5 的代碼後打開下面這行
           # run_one pm25 "PM2.5"
 
       - name: 有變動才 commit
         run: |
           set -euo pipefail
-          if git diff --quiet -- data; then
+          # 用 git status 而不是 git diff：data/ 第一次產生時是「未追蹤」檔案，
+          # git diff 看不到未追蹤檔案，會誤判成沒有變動而把抓到的資料丟掉。
+          if [ -z "$(git status --porcelain -- data)" ]; then
             echo "data/ 沒有變動，不提交"
             exit 0
           fi
@@ -47,4 +61,6 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add data
           git commit -m "每日增量：$(date -u -d yesterday +%Y-%m-%d)"
+          # 併發或落後時先 rebase 再推，避免非快轉被拒
+          git pull --rebase origin main
           git push
