@@ -105,9 +105,14 @@ def probe_params(date: str, codes):
     return hits
 
 
-def sta_get(path: str):
-    req = urllib.request.Request(STA + path, headers={"Accept": "application/json",
-                                                      "User-Agent": "air-quality-observer/1.0"})
+def sta_get(path: str, **query):
+    """query 一律用 urlencode 編碼：$orderby 的值含空白，直接串進網址會被 urllib 擋下。"""
+    url = STA + path
+    if query:
+        # quote_via=quote：空白編成 %20 而不是 +，OData 伺服器對 + 的解讀不一定一致
+        url += "?" + urllib.parse.urlencode(query, quote_via=urllib.parse.quote)
+    req = urllib.request.Request(url, headers={"Accept": "application/json",
+                                               "User-Agent": "air-quality-observer/1.0"})
     with urllib.request.urlopen(req, timeout=60) as r:
         return json.load(r)
 
@@ -119,8 +124,8 @@ def api_snapshot(outdir: str, device: str, label: str):
     無法即時對照。先把 API 的值（UTC，來源明確）存起來，等隔天檔案出來再比對，
     才能用「同一裝置同一分鐘的數值是否相同」直接證明 history 的時間欄位是哪個時區。
     """
-    q = "/Things?$filter=properties/stationID eq '%s'&$expand=Datastreams" % device
-    things = sta_get(urllib.parse.quote(q, safe="/?$=&'"))
+    things = sta_get("/Things", **{"$filter": "properties/stationID eq '%s'" % device,
+                                   "$expand": "Datastreams"})
     vals = things.get("value") or []
     if not vals:
         log("!! API 查不到裝置 %s" % device)
@@ -131,8 +136,8 @@ def api_snapshot(outdir: str, device: str, label: str):
         log("!! 裝置 %s 沒有名為「%s」的 datastream，實際有：%s"
             % (device, label, [s.get("name") for s in streams]))
         return None
-    obs = sta_get("/Datastreams(%s)/Observations?$top=500&$orderby=phenomenonTime desc"
-                  % ds["@iot.id"])
+    obs = sta_get("/Datastreams(%s)/Observations" % ds["@iot.id"],
+                  **{"$top": "500", "$orderby": "phenomenonTime desc"})
     rows = [[o["phenomenonTime"], o["result"]] for o in obs.get("value") or []]
     if not rows:
         log("!! datastream %s 沒有觀測值" % ds["@iot.id"])

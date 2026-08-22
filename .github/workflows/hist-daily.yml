@@ -44,9 +44,12 @@ jobs:
               --param "$1" --label "$2" --skip-missing \
               --devices "$DEVICES" --tz "$TZ_SOURCE" --out data
           }
+          # 2026-08-22 以 --probe 實測：只有 humidity、pm25、temperature 三個代碼存在
+          # （pm2.5、pm2_5、PM25、pm10、temp、voc、co2 都是 HTTP 200 但回 HTML 錯誤頁）。
+          # 這三個正好對應該裝置的三個 datastream。temperature 目前沒用到就不抓，
+          # 每個測項每天都是一次 ~220 MB 的下載。
+          run_one pm25 "PM2.5"
           run_one humidity "Relative humidity"
-          # TODO: 用回填 workflow 的「探測有哪些測項代碼」確認 PM2.5 的代碼後打開下面這行
-          # run_one pm25 "PM2.5"
 
       - name: 有變動才 commit
         run: |
