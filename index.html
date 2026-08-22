@@ -1730,9 +1730,9 @@ function renderKey(){
     const own = mine.flatMap(x => x.points).map(p => p.ms);
     const span = own.length ? fmtSpan(Math.max(...own) - Math.min(...own)) : "—";
     // 這一站的序列是不是併了 repo 的歷史檔——來源不同，圖例要講明
-    const h = mine.reduce((a,x) => a + (x.histCount || 0), 0);
-    const a = mine.reduce((acc,x) => acc + (x.apiCount || 0), 0);
-    const src = h ? ` · 歷史檔 ${h} ＋ API ${a} 筆` : "";
+    const nHist = mine.reduce((acc,x) => acc + (x.histCount || 0), 0);
+    const nApi  = mine.reduce((acc,x) => acc + (x.apiCount  || 0), 0);
+    const src = nHist ? ` · 歷史檔 ${nHist} ＋ API ${nApi} 筆` : "";
     return `<span><span class="swatch${isHourly(d) ? " ring" : ""}" style="background:${c};border-color:${c}"></span>${
       escHtml(stationLabel(d.station))}<span class="badge ${d.station.src}">${SOURCES[d.station.src].badge}</span>` +
       `<span style="color:var(--muted)"> ${span}${escHtml(src)}</span></span>`;
