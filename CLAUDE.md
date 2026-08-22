@@ -266,7 +266,8 @@
 
 ## 待辦（依優先序）
 
-1. **history.colife.org.tw → GitHub Actions 預處理**（進行中） — STA 只留約 2 小時，這條沒做的話，
+1. **history.colife.org.tw → GitHub Actions 預處理**（**主體已完成**，只剩時區的決定性驗證，
+   見「未驗證」第 6 項） — STA 只留約 2 小時，這條沒做的話，
    diurnal pattern、分層統計、兩測點比較全都只能看幾小時，專案的核心情境無法成立。
    **階段 A（已做）**：微型感測器分頁加了「探測 history.colife.org.tw」，
    貼上任一檔案網址即可回報 HTTP 狀態、Content-Type／Length、前 16 bytes（辨識 ZIP／gzip／CSV）、
