@@ -32,9 +32,9 @@
   .panel{background:var(--panel);border:1px solid var(--rule);border-radius:3px;padding:16px}
   .panel + .panel{margin-top:16px}
   .panel.primary{border-color:var(--accent);border-width:1.5px}
-  .panel-title{font-family:var(--mono);font-size:11px;letter-spacing:.13em;text-transform:uppercase;color:var(--muted);margin:0 0 12px;display:flex;justify-content:space-between;align-items:baseline;gap:8px}
+  .panel-title{font-family:var(--mono);font-size:11px;letter-spacing:.13em;text-transform:uppercase;color:var(--muted);margin:0 0 12px;display:flex;justify-content:space-between;align-items:baseline;gap:4px 8px;flex-wrap:wrap;white-space:nowrap}
   .panel.primary .panel-title{color:var(--accent)}
-  .panel-title .count{color:var(--accent);font-weight:600;letter-spacing:.04em;text-transform:none}
+  .panel-title .count{color:var(--accent);font-weight:600;letter-spacing:.04em;text-transform:none;white-space:normal;margin-left:auto;text-align:right}
 
   label.field{display:block;margin-bottom:11px}
   div.field{margin-bottom:11px}
@@ -61,7 +61,7 @@
   .hint strong{color:var(--ink-2)}
 
   .tabs{display:grid;grid-template-columns:1fr 1fr;gap:0;margin-bottom:12px;border:1px solid var(--rule-strong);border-radius:2px;overflow:hidden}
-  .tab{background:#fff;color:var(--ink-2);border:none;border-radius:0;font-size:12.5px;font-weight:500;padding:8px 6px;line-height:1.3}
+  .tab{background:#fff;color:var(--ink-2);border:none;border-radius:0;font-size:12.5px;font-weight:500;padding:8px 6px;line-height:1.3;white-space:nowrap}
   .tabs-3{grid-template-columns:1fr 1fr 1fr}
   .tab + .tab{border-left:1px solid var(--rule-strong)}
   .tab:hover{background:var(--accent-soft);color:var(--accent)}
@@ -69,6 +69,16 @@
   .tab small{display:block;font-family:var(--mono);font-size:9.5px;opacity:.8;font-weight:400;letter-spacing:.02em}
 
   details{margin-top:12px;border-top:1px solid var(--rule);padding-top:10px}
+  /* 面板本身就是 details 時，不要再套上面那條分隔線與上緣間距 */
+  #addBox{margin-top:0;border-top:none;padding-top:0}
+  /* summary 被設成 display:flex（繼承自 .panel-title）之後瀏覽器就不畫展開標記了，
+     所以自己補一個，否則收合狀態看起來只是一行不能點的標題。 */
+  .as-summary{cursor:pointer;list-style:none;margin-bottom:0}
+  .as-summary::-webkit-details-marker{display:none}
+  .as-summary::after{content:"＋ 展開";margin-left:auto;font-size:10.5px;letter-spacing:.04em;
+    color:var(--accent);text-transform:none;font-weight:600;white-space:nowrap}
+  #addBox[open] .as-summary::after{content:"－ 收合"}
+  #addBox[open] .as-summary{margin-bottom:12px}
   summary{font-size:12px;color:var(--ink-2);cursor:pointer;font-weight:500;list-style:revert}
 
   .status{font-family:var(--mono);font-size:12px;padding:9px 12px;border-radius:2px;border:1px solid var(--rule);background:#fff;color:var(--ink-2);margin-bottom:16px}
@@ -130,10 +140,14 @@
   .legend div{font-family:var(--mono);font-size:10px;padding:3px 7px;color:#fff;border-radius:1px;white-space:nowrap}
 
   table{border-collapse:collapse;width:100%;font-family:var(--mono);font-size:12px;margin-top:4px}
-  th,td{padding:5px 7px;text-align:right;border-bottom:1px solid var(--rule)}
+  /* 中文欄名（「N（小時）」「平均」「假日 · 離峰」）在窄螢幕會被逐字折行，
+     整欄變成一個字寬。改為不折行＋整張表可橫向捲動。 */
+  th,td{padding:5px 7px;text-align:right;border-bottom:1px solid var(--rule);white-space:nowrap}
   th{color:var(--muted);font-weight:500;font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;border-bottom:1px solid var(--rule-strong)}
   td:first-child,th:first-child{text-align:left}
-  .tablescroll{max-height:300px;overflow-y:auto}
+  .tablescroll{max-height:300px;overflow:auto}
+  /* 分層統計等表格放在可橫向捲動的容器裡，窄螢幕才不會擠成一團 */
+  #strat, #bias{overflow-x:auto}
 
   .sharebar{display:flex;gap:8px;align-items:center;margin-top:10px;flex-wrap:wrap}
   .sharebar input{font-size:11px;flex:1;min-width:200px}
@@ -144,6 +158,13 @@
   .notes li{margin-bottom:6px}
   .notes code{font-family:var(--mono);font-size:11.5px;background:#E8EDEB;padding:1px 4px;border-radius:2px;word-break:break-all}
 
+  /* 手機：把字級與間距收一點，讓三個分頁排得下、圖表拿到更多高度 */
+  @media (max-width:430px){
+    .tab{font-size:11px;padding:7px 3px;letter-spacing:-.02em}
+    .tab small{font-size:8.5px}
+    .panel{padding:12px}
+    .notes ol{font-size:12px}
+  }
   @media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
 </style>
 </head>
@@ -154,9 +175,10 @@
     <p class="eyebrow">民生公共物聯網 · OGC SensorThings API</p>
     <h1>空品測站連續觀測台</h1>
     <p class="standfirst">
-      兩個資料來源並列：環境部<strong>智慧城鄉空品微型感測器</strong>（3 分鐘解析度，貼裝置編號）與
-      <strong>國家空品測站</strong>（每小時，打測站名稱）。同一測項可疊在同一張圖上，用來檢驗微型感測器
-      相對於法規等級測站的系統性偏差。
+      三個資料來源並列：環境部<strong>智慧城鄉空品微型感測器</strong>（1–3 分鐘，貼裝置編號）與
+      <strong>國家空品測站</strong>兩種介接（每小時，打測站名稱）。同一測項可疊在同一張圖上，
+      用來看微型感測器相對於法規等級測站的差異方向與時間結構。
+      微型感測器的跨日資料由 GitHub Actions 事先萃取進 <code>data/</code>，網頁同源讀取後與 API 的近 2 小時合併。
     </p>
   </header>
 
@@ -166,7 +188,8 @@
     <div>
       <!-- ---------- 主要入口 ---------- -->
       <section class="panel primary">
-        <p class="panel-title">加入測站</p>
+        <details id="addBox" open>
+          <summary class="panel-title as-summary">加入測站</summary>
 
         <div class="tabs tabs-3" role="group" aria-label="資料來源">
           <button type="button" class="tab on" id="tabIot" aria-pressed="true">微型感測器<small>3 分鐘 · 編號</small></button>
@@ -281,6 +304,7 @@
             接在前綴後面，與附的 <code>worker.js</code> 相容。
           </p>
         </details>
+        </details>
       </section>
 
       <!-- ---------- 已加入 ---------- -->
@@ -347,9 +371,10 @@
         <div id="charts"><p class="hint" style="margin:0">尚無資料。</p></div>
         <p class="hint">
           細線＝微型感測器（分鐘級原始值）；粗線加空心圓點＝國家空品測站（小時值，已是該小時平均）。
-          <strong>各來源的可回溯長度差很多</strong>：微型感測器與 STA 只留最近約 2 小時，
-          環境部開放資料約 4 天——圖例上每一站後面的數字就是它自己的涵蓋範圍。
-          兩者時間解析度不同，只能比較趨勢與同一小時的水準，不可逐點相減。
+          <strong>各來源的可回溯長度差很多</strong>：API 本身只留最近約 2 小時（微型感測器與 STA）
+          或約 4 天（環境部開放資料）；微型感測器更早的部分來自 repo 事先萃取好的歷史檔，
+          圖例會<strong>分開標示</strong>兩段的筆數。圖例上每一站後面的數字就是它自己的涵蓋範圍。
+          兩者時間解析度不同，只能比較趨勢與同一小時的水準，<strong>不可逐點相減</strong>。
           缺值不內插，中斷處直接斷線。
         </p>
       </section>
@@ -390,12 +415,28 @@
   <section class="notes">
     <h2>方法與限制</h2>
     <ol>
-      <li><strong>資料來源</strong>：民生公共物聯網資料服務平台。（a）環境部「智慧城鄉空品微型感測器」，全國約 10,999 點、3 分鐘更新、2017 年 6 月起，endpoint <code>https://sta.colife.org.tw/STA_AirQuality_EPAIoT/v1.0/</code>；（b）環境部「國家空品測站」，77 站、每小時、1998 年起，endpoint <code>https://sta.ci.taiwan.gov.tw/STA_AirQuality_v2/v1.0/</code>（同一服務內以 <code>properties/authority</code> 區分環境部測站與中研院校園感測器）。皆為 OGC SensorThings API v1.0，免 API key，授權：政府資料開放授權條款第 1 版。</li>
+      <li><strong>資料來源（三個）</strong>：
+        （a）<strong>微型感測器</strong>——民生公共物聯網「智慧城鄉空品微型感測器」，全國約 10,999 點、2017 年 6 月起，
+        <code>https://sta.colife.org.tw/STA_AirQuality_EPAIoT/v1.0/</code>。
+        資料集文件寫 3 分鐘，但實測裝置 <code>13580653094</code> 是<strong>每 1 分鐘</strong>一筆；本頁一律以序列自身的間隔中位數推算，不寫死。
+        （b）<strong>國家測站（環境部開放資料）</strong>——<code>https://data.moenv.gov.tw/api/v2/</code>（資料集 40448），
+        <strong>77 站全有</strong>（含板橋）、每小時、可回溯約 4 天，<strong>需要 api_key</strong>。
+        （c）<strong>國家測站 STA</strong>——<code>https://sta.colife.org.tw/STA_AirQuality_v2/v1.0/</code>，免金鑰，
+        但這個服務<strong>只收錄 66 站</strong>（板橋、土城等不在其中）且只留近 2 小時。
+        官方文件寫的 <code>sta.ci.taiwan.gov.tw</code> 從瀏覽器連不上，本頁改走 colife。
+        (a)(c) 為 OGC SensorThings API v1.0。授權：政府資料開放授權條款第 1 版。</li>
+      <li><strong>跨日資料怎麼來</strong>：三個 API 都只保留近期觀測值（微型感測器與 STA 實測約 2 小時，開放資料約 4 天）。
+        微型感測器的歷史值由 GitHub Actions 從 <code>history.colife.org.tw</code> 的每日 ZIP 事先萃取成
+        <code>data/iot/&lt;裝置&gt;/&lt;月&gt;.csv</code>，網頁以同源方式讀回來，補在 API 那 2 小時的前面；
+        合併以<strong>分鐘</strong>為鍵去重，重疊處以 API 為準，狀態列與圖例會<strong>分開標示</strong>兩段筆數。
+        另有排程每 2 小時把 API 的滾動視窗併進 CSV，避免「今天」出現長達近一天的缺口。
+        <strong>history 檔的時間欄位沒有時區標記</strong>，目前以台灣時間解讀；未經逐筆驗證前，
+        狀態列會明講這件事（驗證完成後該提示自動消失）。</li>
       <li><strong>編號比對</strong>：微型感測器依序試 <code>properties/locationId</code>、<code>properties/stationID</code>、完整 <code>name</code>、名稱片段；國家測站依序試 <code>properties/stationName</code>、<code>name</code>、<code>properties/stationID</code>、名稱片段。命中即停。</li>
       <li><strong>時區</strong>：API 的 <code>phenomenonTime</code> 為 UTC，本頁一律轉為台灣時間（UTC+8）後才分組與繪圖。若 <code>phenomenonTime</code> 是時間區間（<code>起/迄</code>），取<strong>區間起點</strong>當作該筆的時標。</li>
       <li><strong>分頁</strong>：SensorThings API 單頁上限 100 筆。本頁先以 <code>$count=true</code> 取總筆數再用 <code>$skip</code> 併發取回（上限 4）；若伺服器未回 <code>@iot.count</code>，改為逐頁跟隨 <code>@iot.nextLink</code>。單頁失敗會自動重試（僅對 429／5xx），仍失敗則計數並在狀態列標示「資料不完整」——不會靜默略過。</li>
       <li><strong>兩個來源的可比性</strong>：國家測站是法規等級儀器（β 射線／震盪天平等）並經品保程序，微型感測器多為光散射法，靈敏度與準確度不同，環境部明示微型感測器數據不宜直接比對空氣品質標準，只適合觀察<strong>相對趨勢與時間 pattern</strong>；高濕度下光散射法對 PM2.5 常有正偏誤。兩者疊圖的用途是看偏差方向與時間結構，不是校正。</li>
-      <li><strong>缺值</strong>：不內插、不填補。中斷處直接斷線（斷線門檻＝該序列取樣間隔中位數的 2.5 倍，微型感測器至少 20 分鐘）。小時有效筆數不足（3 分鐘序列 &lt; 5 筆）標記為低樣本（半透明）；小時值序列本來每小時就只有 1 筆，不套用此標記。</li>
+      <li><strong>缺值</strong>：不內插、不填補。中斷處直接斷線（斷線門檻＝該序列取樣間隔中位數的 2.5 倍，微型感測器至少 20 分鐘）。小時有效筆數不足（門檻＝<code>min(5, ceil(每小時應有筆數 × 0.6))</code>，隨該序列實際取樣頻率調整）標記為低樣本（半透明）；小時值序列本來每小時就只有 1 筆，不套用此標記。</li>
       <li><strong>分層與偏差量化</strong>：分層統計與來源間偏差一律以<strong>小時平均</strong>為單位（兩個來源時間解析度不同，先降頻成小時才可比），<code>n</code> 是有效小時數；有效筆數不足的小時整格排除，不以任何方式補值。尖峰定義為台灣時間 07–09 與 17–19 時；假日只認週六日，<strong>未納入國定假日與補班日</strong>。Bland–Altman 只描述兩個方法的一致程度，不判定何者正確，bias 也不得回頭用來校正原始曲線。濕度分層使用該微型感測器自身的 RH。</li>
       <li><strong>頁面版本</strong>：<code id="buildTag"></code>（回報問題時附上這串，可確認你看到的是不是最新版；手機請長按重新整理或清除快取以取得新版）。</li>
       <li><strong>用途</strong>：個人資料探索工具，非法規依據。若要引用於論文或正式報告，應改用國家測站經品保程序後的數據，並註明資料擷取日期。</li>
@@ -421,7 +462,7 @@ const MAX_STATIONS  = 3;
 const CONCURRENCY   = 4;      // 同時對來源站的請求數上限
 const MAX_PAGES     = 200;    // 單一序列的分頁上限，避免失控迴圈
 const PAGE_SIZE     = 100;    // 伺服器單頁上限
-const BUILD         = "2026-08-23b";   // 版本標記，診斷輸出與頁尾都會顯示，用來確認是否讀到新版
+const BUILD         = "2026-08-24a";   // 版本標記，診斷輸出與頁尾都會顯示，用來確認是否讀到新版
 
 /* 環境部開放資料的欄位 → 本頁的測項名稱。PM2.5 用同一個名稱，才能跟微型感測器疊在同一張圖。
    實測欄位：aqx_p_488 用 windspeed／datacreationdate，aqx_p_432 用 wind_speed／publishtime。 */
@@ -1787,6 +1828,7 @@ async function loadObservations(){
   $("csvBtn").disabled = !n;
   syncHash();
   saveCache(days, $("endDate").value);
+  if (firstLoad){ collapseAdd(); firstLoad = false; }
 }
 
 /* ===================== 繪圖 ===================== */
@@ -1867,6 +1909,7 @@ function renderCharts(){
   const allPts = L.flatMap(d => d.points);
   const t0 = Math.min(...allPts.map(p => p.ms)), t1 = Math.max(...allPts.map(p => p.ms));
 
+  const G = chartGeom();
   box.innerHTML = "";
   params.forEach((pm, i) => {
     const series = L.filter(d => d.param === pm);
@@ -1877,10 +1920,11 @@ function renderCharts(){
     wrap.innerHTML =
       `<p class="chart-title"><span>${escHtml(pm)}${unit ? ' <em>' + escHtml(unit) + '</em>' : ""}</span>` +
       `<em>${series.length} 條序列${srcs.length > 1 ? " · 兩個來源疊圖" : ""}</em></p>` +
-      `<div class="chartbox"><svg viewBox="0 0 900 ${i === 0 ? 300 : 220}" role="img" aria-label="${escHtml(pm)} 隨時間變化"></svg>` +
+      `<div class="chartbox"><svg viewBox="0 0 ${G.W} ${i === 0 ? G.H1 : G.H2}" role="img" aria-label="${escHtml(pm)} 隨時間變化"></svg>` +
       `<div class="readout" style="display:none"></div></div>`;
     box.appendChild(wrap);
-    drawChart(wrap.querySelector("svg"), wrap.querySelector(".readout"), series, t0, t1, i === 0 ? 300 : 220);
+    drawChart(wrap.querySelector("svg"), wrap.querySelector(".readout"), series, t0, t1,
+              i === 0 ? G.H1 : G.H2, G);
   });
 
   $("seriesMeta").textContent =
@@ -1888,8 +1932,20 @@ function renderCharts(){
       fmtSpan(t1-t0)}（各站涵蓋見圖例）· ${allPts.length} 點`;
 }
 
-function drawChart(svg, ro, series, t0, t1, H){
-  const W = 900, ML = 48, MR = 12, MT = 12, MB = 28;
+/* 圖表 viewBox 的尺寸。
+   為什麼要隨螢幕調整：SVG 以 width:100% 縮放，viewBox 寬 900 放進 350px 的手機容器
+   等於整張圖乘以 0.39——10px 的軸標籤實際只有 3.9px，完全看不清楚。
+   窄螢幕改用接近實際像素的 viewBox，縮放比回到 ~1，字才會是它該有的大小；
+   同時把高度拉高，因為 3:1 的比例在手機上會把整條曲線壓成一條線。 */
+function chartGeom(){
+  return window.innerWidth < 620
+    ? {W:380, H1:300, H2:240, ML:32, MR:8,  MT:10, MB:24}
+    : {W:900, H1:300, H2:220, ML:48, MR:12, MT:12, MB:28};
+}
+
+function drawChart(svg, ro, series, t0, t1, H, geom){
+  const g = geom || chartGeom();
+  const W = g.W, ML = g.ML, MR = g.MR, MT = g.MT, MB = g.MB;
   const all = series.flatMap(d => d.points);
   const vMax = niceCeil(Math.max(...all.map(p => p.value)) * 1.12) || 1;
   const X = ms => ML + (ms-t0)/(t1-t0 || 1)*(W-ML-MR);
@@ -2225,7 +2281,10 @@ function renderBias(){
 
 /* Bland–Altman：x = 兩者平均，y = 差值 */
 function blandAltman(pairs, d, ref){
-  const W = 900, H = 240, ML = 52, MR = 14, MT = 12, MB = 30;
+  // 同 chartGeom()：窄螢幕用小 viewBox，否則整張圖被縮到 0.4 倍、字看不見
+  const narrow = window.innerWidth < 620;
+  const W = narrow ? 380 : 900, H = narrow ? 300 : 240;
+  const ML = narrow ? 36 : 52, MR = narrow ? 10 : 14, MT = 12, MB = narrow ? 26 : 30;
   const xs = pairs.map(p => (p.micro + p.nat)/2), ys = pairs.map(p => p.micro - p.nat);
   const st = describe(ys);
   const x0 = Math.min(...xs), x1 = Math.max(...xs);
@@ -2341,6 +2400,9 @@ const HASH_STORE = "airq.lastview";
    所以在它之前 setStatus 的東西都會消失——放這裡才看得到。 */
 let pendingNotes = [];
 
+// 只有「第一次載入完成」才自動收合輸入面板；之後使用者自己開合，程式不再插手
+let firstLoad = true;
+
 /* 回復途中要停止記憶。否則若某一站當下加不回來（例如開放資料的站需要 api_key
    而金鑰沒存），清單會是空的，接著 syncHash 就會把記住的內容當成「使用者清空了」
    而刪掉——金鑰沒存一次，記憶就永久消失。 */
@@ -2414,6 +2476,13 @@ function restoreCache(cache){
   }
   dataset = out;
   return dataset.reduce((a, d) => a + d.points.length, 0);
+}
+
+/* 已經有測站可看時就把輸入面板收起來（手機上它佔掉整個第一屏）。
+   只在回訪／回復的路徑呼叫；使用者手動展開後就不會再自動收合。 */
+function collapseAdd(){
+  const d = $("addBox");
+  if (d && picked.length) d.open = false;
 }
 
 function agoText(ms){
@@ -2500,6 +2569,7 @@ async function loadFromHash(){
     return;
   }
   render();
+  collapseAdd();
   $("csvBtn").disabled = false;
   // 沒能全部回復測站的提醒（pendingNotes）在這條路徑上不會經過 loadObservations()，
   // 要自己接上去，不然使用者永遠看不到
@@ -2578,6 +2648,16 @@ function setSource(src){
     navigator.clipboard.writeText(location.href)
       .then(() => setStatus("連結已複製。"))
       .catch(() => { $("shareUrl").select(); });
+  });
+
+  // 橫豎屏切換會跨過 chartGeom() 的斷點，圖表要重畫，否則軸標籤大小會跑掉
+  let wasNarrow = window.innerWidth < 620, rzTimer;
+  window.addEventListener("resize", () => {
+    clearTimeout(rzTimer);
+    rzTimer = setTimeout(() => {
+      const now = window.innerWidth < 620;
+      if (now !== wasNarrow){ wasNarrow = now; if (live().length) render(); }
+    }, 200);
   });
 
   loadFromHash();
