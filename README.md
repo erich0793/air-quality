@@ -28,6 +28,7 @@
 | `scripts/hist_extract.py` | 從 history.colife.org.tw 萃取指定裝置的歷史觀測值（只用 Python 標準函式庫） |
 | `.github/workflows/hist-backfill.yml` | 手動回填／探測（五種模式） |
 | `.github/workflows/hist-daily.yml` | 每日增量抓取（台灣時間 05:00） |
+| `.github/workflows/api-append.yml` | 每 2 小時把 API 即時值併進歷史檔（補「今天」的缺口） |
 | `data/` | 上面兩個 workflow 的產出，網頁以同源方式讀取 |
 | `worker.js` | Cloudflare Worker CORS proxy，**只有被 CORS 擋下時才需要** |
 | `README.md` | 本說明 |
@@ -231,6 +232,15 @@ index.html   與 API 的近 2 小時合併成單一序列
   不會合成一個看不出來源的總數。
 - `data/` 還沒有資料時靜默略過，不會報錯；以 `file://` 直接開啟時讀不到相對路徑，
   本機測試要起一個 http server（例如 `python3 -m http.server`）。
+
+> **「今天」為什麼常常是空的——以及怎麼補**
+>
+> history 站的日檔要等**隔天台灣時間 03:00** 才產出，而 API 只保留**約 2 小時**。
+> 兩者中間最多差約 22 小時，所以在傍晚或半夜看，「今天」幾乎整天沒有資料。
+> 這不是抓取失敗，也不是感測器離線。
+>
+> `api-append.yml` 每 2 小時把 API 的滾動視窗併進 CSV，把缺口縮到最多 2 小時。
+> **間隔不能拉長超過 2 小時**，否則會漏掉 API 已經淘汰的觀測值。
 
 ### 自己回填
 

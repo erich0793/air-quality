@@ -22,6 +22,7 @@
 | `scripts/hist_extract.py` | 從 history 站萃取指定裝置的歷史觀測值（只用標準函式庫） |
 | `.github/workflows/hist-backfill.yml` | 手動回填／探測，五種模式 |
 | `.github/workflows/hist-daily.yml` | 每日增量（台灣時間 05:00）＋ 存 API 快照 ＋ 自動時區判定 |
+| `.github/workflows/api-append.yml` | **每 2 小時**把 API 的滾動視窗併進 CSV，補「今天」的缺口 |
 | `data/` | 上面兩個 workflow 的產出，網頁以同源方式讀取 |
 | `worker.js` | Cloudflare Worker CORS proxy，備援用，尚未部署（目前三個來源都不需要） |
 | `README.md` | 部署與使用說明 |
@@ -285,6 +286,13 @@
 - **比對不要假設欄位名**：`stationHaystack()` 把 `name` 與 `properties` 裡所有字串值一起搜，
   `countyOf()` 也會在 properties 裡找結尾是「縣／市」的值。不同來源的欄位命名不一致，
   寫死欄位名就會漏站。
+- **`merge_write()` 以「分鐘」為鍵去重，不是完整時標**：來源的秒數不一致
+  （history 實測 `:00`／`:29`／`:38`，API 實測 `:30`／`:38`）。照完整時標存，同一分鐘會變成兩列；
+  等 history 的日檔補上一個已被 API 填過的日子，那天會整天重複，而網頁那側是以分鐘去重的，
+  會從重複的列裡任選一筆。先到的時標保留，後到的同分鐘只補欄位。
+- **「今天」的缺口是結構性的**：history 日檔隔天 03:00 才有、API 只留 2 小時，
+  中間最多差約 22 小時。`api-append.yml` 每 2 小時補一次把它縮到 2 小時以內。
+  **間隔不可以拉長超過 2 小時**，否則會漏掉 API 已經淘汰掉的觀測值。
 - **資料保留期**：加站時 `probeRange()` 會問該 datastream 最舊／最新的一筆，存進 `st.range`，
   UI 顯示「可查 …」。載入後若區間早於保留期，狀態列要明講是**保留期不足**，
   不得再歸因成「抓取失敗」或「感測器離線」——這三者是不同的原因，訊息不可混用。

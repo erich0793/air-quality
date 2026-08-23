@@ -158,6 +158,75 @@ def api_snapshot(outdir: str, device: str, label: str):
     return path
 
 
+def api_fetch(device: str, labels):
+    """回傳 {label: {utc_iso: value}}，取 API 目前還留著的那 ~2 小時。
+       API 的 phenomenonTime 明確是 UTC，不需要也不可以套 --tz。"""
+    try:
+        things = sta_get("/Things", **{"$filter": "properties/stationID eq '%s'" % device,
+                                       "$expand": "Datastreams"})
+    except Exception as e:                                    # noqa: BLE001
+        # 每 2 小時跑一次，偶爾連不上是正常的。講清楚就好，不要吐一整串 traceback。
+        log("!! 連不到 API（%s）：%s" % (STA, e))
+        return {}
+    vals = things.get("value") or []
+    if not vals:
+        log("!! API 查不到裝置 %s" % device)
+        return {}
+    streams = {s.get("name"): s for s in (vals[0].get("Datastreams") or [])}
+    out = {}
+    for label in labels:
+        ds = streams.get(label)
+        if ds is None:
+            log("  裝置 %s 沒有「%s」這個 datastream（實際有：%s）"
+                % (device, label, "、".join(streams) or "無"))
+            continue
+        try:
+            obs = sta_get("/Datastreams(%s)/Observations" % ds["@iot.id"],
+                          **{"$top": "500", "$orderby": "phenomenonTime desc"})
+        except Exception as e:                                # noqa: BLE001
+            log("  %s：讀取觀測值失敗，%s" % (label, e))
+            continue
+        rows = {}
+        for o in obs.get("value") or []:
+            iso = str(o.get("phenomenonTime") or "")
+            try:
+                v = float(o.get("result"))
+            except (TypeError, ValueError):
+                continue
+            if not iso or v < 0:
+                continue
+            # 統一成與 history 相同的寫法（…Z），合併時才不會出現兩種格式的同一時刻
+            t = datetime.fromisoformat(iso.replace("Z", "+00:00")).astimezone(timezone.utc)
+            rows[t.isoformat().replace("+00:00", "Z")] = v
+        if rows:
+            out[label] = rows
+            log("  %s：API 取回 %d 筆（%s ～ %s）"
+                % (label, len(rows), min(rows), max(rows)))
+        else:
+            log("  %s：API 沒有觀測值" % label)
+    return out
+
+
+def api_append(outdir: str, devices, labels):
+    """把 API 那 2 小時併進 data/iot/<裝置>/<YYYY-MM>.csv。
+
+    為什麼要做：history 站的日檔隔天 03:00 才產出，API 只留 2 小時，中間會有
+    最多約 22 小時的缺口——「今天」幾乎整天看不到。每 2 小時跑一次這個，
+    缺口就縮到最多 2 小時。順帶好處是資料開始自己累積，不再完全依賴 history 站
+    （該服務據稱只提供到 2026-12-01）。
+    """
+    total = 0
+    for dev in devices:
+        log("裝置 %s" % dev)
+        got = api_fetch(dev, labels)
+        for label, rows in got.items():
+            total += merge_write(outdir, dev, label, rows)
+    if total:
+        update_manifest(outdir)
+    log("完成，共寫入/更新 %d 列" % total)
+    return total
+
+
 def pick_column(header, hints, sample_rows=None, match_values=None):
     """先用欄位名猜；猜不到就看實際內容有沒有命中目標值（欄位名不可靠時的保險）。"""
     low = [h.strip().lower() for h in header]
@@ -456,7 +525,14 @@ def extract(zpath: str, devices, tz: str, param_label: str, param_code: str,
 
 
 def merge_write(outdir: str, device: str, param: str, data: dict):
-    """把該測項併進 data/iot/<device>/<YYYY-MM>.csv（寬表，以時間去重）。"""
+    """把該測項併進 data/iot/<device>/<YYYY-MM>.csv（寬表）。
+
+    **以「分鐘」為鍵去重**，不是以完整時標。來源的秒數並不一致（history 實測有
+    :00／:29／:38，API 實測 :30／:38），同一分鐘的量測若照完整時標存就會變成兩列——
+    等 history 的日檔補上一個已被 API 填過的日子，那天會整天出現重複分鐘，
+    而網頁那側是以分鐘去重的，會從重複的列裡任選一筆。
+    先到的時標保留下來，後到的同分鐘只補欄位，不新增列。
+    """
     by_month = {}
     for iso, val in data.items():
         by_month.setdefault(iso[:7], {})[iso] = val
@@ -465,25 +541,35 @@ def merge_write(outdir: str, device: str, param: str, data: dict):
         d = os.path.join(outdir, "iot", device)
         os.makedirs(d, exist_ok=True)
         path = os.path.join(d, month + ".csv")
-        table, params = {}, []
+        table, params = {}, []          # table: 分鐘 -> {"_iso": 完整時標, 測項: 值}
         if os.path.exists(path):
             with open(path, newline="", encoding="utf-8") as f:
                 rd = csv.reader(f)
                 head = next(rd, ["time_utc"])
                 params = head[1:]
                 for r in rd:
-                    table[r[0]] = dict(zip(params, r[1:]))
+                    if not r:
+                        continue
+                    rec = dict(zip(params, r[1:]))
+                    rec["_iso"] = r[0]
+                    table[r[0][:16]] = rec
         if param not in params:
             params.append(param)
+        added = 0
         for iso, val in rows.items():
-            table.setdefault(iso, {})[param] = ("%g" % val)
+            rec = table.setdefault(iso[:16], {"_iso": iso})
+            if "_iso" not in rec:
+                rec["_iso"] = iso
+            rec[param] = ("%g" % val)
+            added += 1
         with open(path, "w", newline="", encoding="utf-8") as f:
             w = csv.writer(f)
             w.writerow(["time_utc"] + params)
-            for iso in sorted(table):
-                w.writerow([iso] + [table[iso].get(p, "") for p in params])
-        written += len(rows)
-        log("  寫入 %s（該月共 %d 列，本次新增/更新 %d 列）" % (path, len(table), len(rows)))
+            for key in sorted(table):
+                rec = table[key]
+                w.writerow([rec["_iso"]] + [rec.get(p, "") for p in params])
+        written += added
+        log("  寫入 %s（該月共 %d 列，本次新增/更新 %d 列）" % (path, len(table), added))
     return written
 
 
@@ -542,6 +628,10 @@ def main():
                     help="判定來源時間欄位的時區（逐時剖面＋與 API 快照逐筆比對），不寫資料")
     ap.add_argument("--api-snapshot", action="store_true",
                     help="把 API 目前保留的那 ~2 小時存進 <out>/_tzcheck，供日後比對時區")
+    ap.add_argument("--api-append", action="store_true",
+                    help="把 API 目前保留的那 ~2 小時併進 data/iot/<裝置>/<月>.csv（補「今天」的缺口）")
+    ap.add_argument("--labels", default="",
+                    help="--api-append 要抓的測項，逗號分隔；留空＝沿用 manifest 裡已有的")
     ap.add_argument("--probe", nargs="?", const=PROBE_CODES, default=None,
                     help="探測某一天有哪些測項檔（逗號分隔的候選代碼，預設試常見的幾種）")
     ap.add_argument("--col-device", type=int, default=-1)
@@ -550,6 +640,26 @@ def main():
     a = ap.parse_args()
 
     probing = a.probe is not None
+    if a.api_append:
+        devs = [d.strip() for d in a.devices.split(",") if d.strip()]
+        if not devs:
+            ap.error("--api-append 需要 --devices")
+        labels = [x.strip() for x in a.labels.split(",") if x.strip()]
+        if not labels:
+            # 沒指定就沿用 manifest 裡已經在追蹤的測項，避免在這裡又寫死一份清單
+            mp = os.path.join(a.out, "manifest.json")
+            man = json.load(open(mp, encoding="utf-8")) if os.path.exists(mp) else {}
+            seen = []
+            for d in devs:
+                for p in ((man.get("devices") or {}).get(d) or {}).get("params") or []:
+                    if p not in seen:
+                        seen.append(p)
+            labels = seen
+        if not labels:
+            ap.error("--api-append 找不到要抓的測項：manifest 裡沒有紀錄，請用 --labels 指定")
+        log("要抓的測項：%s" % "、".join(labels))
+        sys.exit(0 if api_append(a.out, devs, labels) else 7)
+
     if a.api_snapshot:
         if not a.devices.strip():
             ap.error("--api-snapshot 需要 --devices")

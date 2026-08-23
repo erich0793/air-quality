@@ -1,0 +1,58 @@
+name: 每 2 小時把 API 的即時值併進歷史檔
+
+# 為什麼需要這個：
+#   history 站的日檔要等隔天台灣時間 03:00 才產出，而 API 只保留約 2 小時。
+#   中間會有最多約 22 小時的缺口——「今天」幾乎整天看不到資料。
+#   每 2 小時把 API 那個滾動視窗撈下來併進 CSV，缺口就縮到最多 2 小時。
+#
+# 順帶好處：資料開始自己累積，不再完全依賴 history 站
+#   （民生公共物聯網的資料服務據稱只提供到 2026-12-01）。
+#
+# 間隔為什麼是 2 小時：API 實測就是保留約 2 小時，拉長間隔會漏掉中間的觀測值。
+
+on:
+  schedule:
+    - cron: "5 */2 * * *"        # 錯開整點，避開 GitHub 排程的尖峰
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  DEVICES: "13580653094"
+
+# 同時只跑一個，避免兩次執行同時 commit 而互相打架
+concurrency:
+  group: api-append
+  cancel-in-progress: false
+
+jobs:
+  append:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      # 測項不在這裡寫死：沿用 manifest 裡已經在追蹤的那些，
+      # 這樣日後回填新測項時不用兩邊都改。
+      - name: 抓 API 並併進 CSV
+        id: fetch
+        continue-on-error: true      # 政府來源偶爾連不上，不必讓整個排程變紅
+        run: |
+          set -euo pipefail
+          python3 scripts/hist_extract.py --api-append --devices "$DEVICES" --out data
+
+      - name: 有變動才 commit
+        run: |
+          set -euo pipefail
+          # 用 git status 而不是 git diff：未追蹤的檔案 git diff 看不到
+          if [ -z "$(git status --porcelain -- data)" ]; then
+            echo "data/ 沒有變動，不提交"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data
+          git commit -m "API 即時值：$(date -u -d '+8 hours' '+%Y-%m-%d %H:%M') (台灣時間)"
+          git pull --rebase origin "$GITHUB_REF_NAME"
+          git push
