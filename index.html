@@ -421,7 +421,7 @@ const MAX_STATIONS  = 3;
 const CONCURRENCY   = 4;      // 同時對來源站的請求數上限
 const MAX_PAGES     = 200;    // 單一序列的分頁上限，避免失控迴圈
 const PAGE_SIZE     = 100;    // 伺服器單頁上限
-const BUILD         = "2026-08-23a";   // 版本標記，診斷輸出與頁尾都會顯示，用來確認是否讀到新版
+const BUILD         = "2026-08-23b";   // 版本標記，診斷輸出與頁尾都會顯示，用來確認是否讀到新版
 
 /* 環境部開放資料的欄位 → 本頁的測項名稱。PM2.5 用同一個名稱，才能跟微型感測器疊在同一張圖。
    實測欄位：aqx_p_488 用 windspeed／datacreationdate，aqx_p_432 用 wind_speed／publishtime。 */
@@ -1786,6 +1786,7 @@ async function loadObservations(){
   $("loadBtn").disabled = false;
   $("csvBtn").disabled = !n;
   syncHash();
+  saveCache(days, $("endDate").value);
 }
 
 /* ===================== 繪圖 ===================== */
@@ -2361,9 +2362,65 @@ function savedHash(){
 }
 
 function forgetView(){
-  try { localStorage.removeItem(HASH_STORE); } catch (e){ /* 同上 */ }
-  setStatus("已清除「記住的測站」。下次從沒有參數的網址進來會是空白的。", "");
+  try { localStorage.removeItem(HASH_STORE); localStorage.removeItem(CACHE_STORE); }
+  catch (e){ /* 同上 */ }
+  setStatus("已清除「記住的測站」與上次的資料快取。下次從沒有參數的網址進來會是空白的。", "");
   updateForgetView();
+}
+
+/* ---- 上一次載入的觀測值快取 ----
+   目的：從書籤打開時直接看到上次的圖，不必等重新抓；要更新再自己按「載入」。
+   只存 [時間, 數值] 兩欄，其餘（台灣時間的日／時／時分）在讀回來時用 taipeiParts()
+   重算——存原始值而不是存衍生欄位，檔案小且不會有兩份不一致的時間表示。
+   **這是快取，不是資料來源**：畫面上一定要標明是哪個時間點抓的，不得讓人誤以為是即時值。 */
+const CACHE_STORE = "airq.lastdata";
+
+function saveCache(days, end){
+  if (!dataset.length) return;
+  const body = {
+    saved: Date.now(), days, end,
+    series: dataset.map(d => ({
+      uid: d.station.uid, param: d.param, unit: d.unit, cadenceMin: d.cadenceMin,
+      apiCount: d.apiCount || 0, histCount: d.histCount || 0,
+      pts: d.points.map(p => [p.ms, p.value])
+    }))
+  };
+  try { localStorage.setItem(CACHE_STORE, JSON.stringify(body)); }
+  catch (e){
+    // 資料量超過瀏覽器配額（通常 5 MB）。不留半套的快取，直接清掉。
+    try { localStorage.removeItem(CACHE_STORE); } catch (e2){ /* 沒得清就算了 */ }
+  }
+}
+
+function readCache(){
+  try { return JSON.parse(localStorage.getItem(CACHE_STORE) || "null"); }
+  catch (e){ return null; }
+}
+
+/* 把快取還原成 dataset。測站要能對得起來（uid 相同）才算數，
+   否則寧可什麼都不畫，也不要畫出跟左欄清單不符的圖。 */
+function restoreCache(cache){
+  if (!cache || !Array.isArray(cache.series) || !cache.series.length) return 0;
+  const byUid = new Map(picked.map(s => [s.uid, s]));
+  const out = [];
+  for (const s of cache.series){
+    const st = byUid.get(s.uid);
+    if (!st) return 0;                       // 有對不上的測站就整份不用
+    out.push({
+      station: st, param: s.param, unit: s.unit, cadenceMin: s.cadenceMin,
+      apiCount: s.apiCount, histCount: s.histCount,
+      points: (s.pts || []).map(([ms, v]) => ({...taipeiParts(ms), value: v}))
+    });
+  }
+  dataset = out;
+  return dataset.reduce((a, d) => a + d.points.length, 0);
+}
+
+function agoText(ms){
+  const m = Math.round((Date.now() - ms) / 60000);
+  if (m < 60) return m + " 分鐘前";
+  if (m < 60*24) return (m/60).toFixed(1) + " 小時前";
+  return (m/1440).toFixed(1) + " 天前";
 }
 
 function updateForgetView(){
@@ -2421,7 +2478,36 @@ async function loadFromHash(){
     const fp = $("focusParam");
     if ([...fp.options].some(o => o.value === p.get("focus"))) fp.value = p.get("focus");
   }
-  if (picked.length) loadObservations();
+  if (!picked.length) return;
+
+  // 從分享連結進來 → 照舊直接抓最新的。
+  // 從本機記憶回復 → 先把上次的資料畫出來，要不要更新由使用者決定（按「載入」）。
+  if (!restored){ loadObservations(); return; }
+
+  const cache = readCache();
+  // 快取必須跟現在的日期區間一致，否則圖會跟上方的「往前天數／結束日」對不起來。
+  // 對不上就當作沒有快取，讓使用者自己按載入。
+  const sameRange = cache && String(cache.days) === String($("days").value)
+                          && String(cache.end || "") === String($("endDate").value || "");
+  const n = sameRange ? restoreCache(cache) : 0;
+  if (!n){
+    // 這條路徑也不會經過 loadObservations()，pendingNotes 一樣要自己接上去
+    const notes0 = pendingNotes.splice(0);
+    setStatus(`已回復上次的 ${picked.length} 個測站，但沒有可用的資料快取。`,
+      notes0.length ? "warn" : "",
+      "<ul><li>按「載入測站資料」抓取。</li>" +
+      notes0.map(w => "<li>" + escHtml(w) + "</li>").join("") + "</ul>");
+    return;
+  }
+  render();
+  $("csvBtn").disabled = false;
+  // 沒能全部回復測站的提醒（pendingNotes）在這條路徑上不會經過 loadObservations()，
+  // 要自己接上去，不然使用者永遠看不到
+  const notes = pendingNotes.splice(0);
+  setStatus(`顯示的是 <strong>${agoText(cache.saved)}</strong>（${
+    fmtStamp(cache.saved)}）抓取的資料，<strong>不是即時值</strong>。`, "warn",
+    `<ul><li>${n} 筆 · ${dataset.length} 條序列 · ${picked.length} 站。要更新請按「載入測站資料」。</li>` +
+    notes.map(w => "<li>" + escHtml(w) + "</li>").join("") + "</ul>");
 }
 
 /* ===================== 來源切換 ===================== */
