@@ -289,6 +289,11 @@
         <ul class="stations" id="stationList">
           <li style="border:none"><p class="hint" style="margin:0">還沒有測站。</p></li>
         </ul>
+        <p class="hint" style="margin:6px 0 0">
+          這台裝置會記住你加過的測站，下次直接打開網址就會回復。
+          <button type="button" class="ghost" id="forgetView"
+            style="padding:2px 8px;font-size:11px;display:none">清除記住的測站</button>
+        </p>
       </section>
 
       <!-- ---------- 取樣區間 ---------- -->
@@ -416,7 +421,7 @@ const MAX_STATIONS  = 3;
 const CONCURRENCY   = 4;      // 同時對來源站的請求數上限
 const MAX_PAGES     = 200;    // 單一序列的分頁上限，避免失控迴圈
 const PAGE_SIZE     = 100;    // 伺服器單頁上限
-const BUILD         = "2026-08-22a";   // 版本標記，診斷輸出與頁尾都會顯示，用來確認是否讀到新版
+const BUILD         = "2026-08-23a";   // 版本標記，診斷輸出與頁尾都會顯示，用來確認是否讀到新版
 
 /* 環境部開放資料的欄位 → 本頁的測項名稱。PM2.5 用同一個名稱，才能跟微型感測器疊在同一張圖。
    實測欄位：aqx_p_488 用 windspeed／datacreationdate，aqx_p_432 用 wind_speed／publishtime。 */
@@ -863,9 +868,15 @@ function parseMoenvTime(s){
   return Number.isFinite(ms) ? ms : null;
 }
 
+/* ""、"ND"、"-"、null 一律是無效值，回 null 讓上游丟棄（缺值不補值）。
+   **不可以只靠 Number()**：JS 的 Number("") 與 Number(" ") 都是 0，不是 NaN，
+   會把「這個小時沒回報」變成「這個小時是 0 µg/m³」——憑空生出一個資料點，
+   而且會把平均拉低。空字串必須先擋掉，真正的 "0" 才留著。 */
 const moenvNum = v => {
-  const n = Number(String(v == null ? "" : v).trim());
-  return Number.isFinite(n) ? n : null;     // ""、"ND"、"-" 一律視為無效值，不補值
+  const s = String(v == null ? "" : v).trim();
+  if (s === "" || !/^[-+]?(\d+\.?\d*|\.\d+)([eE][-+]?\d+)?$/.test(s)) return null;
+  const n = Number(s);
+  return Number.isFinite(n) ? n : null;
 };
 
 function moenvStation(rec){
@@ -1653,7 +1664,7 @@ async function loadObservations(){
 
   $("loadBtn").disabled = true; $("csvBtn").disabled = true;
   dataset = [];
-  const warns = [];
+  const warns = pendingNotes.splice(0);      // 併入回復測站時累積的提醒
 
   try {
     for (const st of picked){
@@ -2314,10 +2325,62 @@ function syncHash(){
   if ($("focusParam").value) p.set("focus", $("focusParam").value);
   history.replaceState(null, "", "#" + p.toString());
   if ($("shareUrl")) $("shareUrl").value = location.href;
+  rememberHash(p.toString());
+}
+
+/* 記住上一次的 hash，讓使用者從書籤／首頁進來時不必每次重加測站。
+   直接存整個 hash 字串（而不是另建一套格式），是因為 hash 已經是這個專案唯一的
+   狀態序列化格式——存它就自動涵蓋測站、測項、天數、結束日、重點測項，
+   日後 hash 加欄位也不用再改這裡。api_key 從來不在 hash 裡，所以不會被一起存進去。
+   這是 localStorage 的第二個例外，條件與 api_key 相同：只存在這台裝置、可一鍵清除、
+   讀寫都包 try/catch（無痕模式會丟例外）。 */
+const HASH_STORE = "airq.lastview";
+
+/* 要跟著下一次載入一起顯示的訊息。loadObservations() 會把狀態列整個重寫，
+   所以在它之前 setStatus 的東西都會消失——放這裡才看得到。 */
+let pendingNotes = [];
+
+/* 回復途中要停止記憶。否則若某一站當下加不回來（例如開放資料的站需要 api_key
+   而金鑰沒存），清單會是空的，接著 syncHash 就會把記住的內容當成「使用者清空了」
+   而刪掉——金鑰沒存一次，記憶就永久消失。 */
+let restoring = false;
+
+function rememberHash(h){
+  if (restoring) return;
+  // 沒有測站就不記（只剩天數之類的沒意義），這樣「清除記住的測站」按鈕的
+  // 出現與否才跟它的字面意思一致
+  try {
+    if (h && /(^|&)dev=/.test(h)) localStorage.setItem(HASH_STORE, h);
+    else localStorage.removeItem(HASH_STORE);
+  } catch (e){ /* 無痕模式或封鎖站台資料，記不住就算了，不影響本次使用 */ }
+  updateForgetView();
+}
+
+function savedHash(){
+  try { return localStorage.getItem(HASH_STORE) || ""; } catch (e){ return ""; }
+}
+
+function forgetView(){
+  try { localStorage.removeItem(HASH_STORE); } catch (e){ /* 同上 */ }
+  setStatus("已清除「記住的測站」。下次從沒有參數的網址進來會是空白的。", "");
+  updateForgetView();
+}
+
+function updateForgetView(){
+  const b = $("forgetView");
+  if (b) b.style.display = savedHash() ? "" : "none";
 }
 
 async function loadFromHash(){
-  const p = new URLSearchParams(location.hash.slice(1));
+  // 網址沒帶參數時，改用上次記住的那一份（別人分享給你的連結一定有 hash，
+  // 會直接勝出，不會被本機記憶蓋掉）
+  let src = location.hash.slice(1);
+  let restored = false;
+  if (!src.trim()){
+    src = savedHash();
+    restored = !!src;
+  }
+  const p = new URLSearchParams(src);
   if (p.get("end")) $("endDate").value = p.get("end");
   if (p.get("days")) $("days").value = p.get("days");
   if (p.get("params")){
@@ -2325,13 +2388,34 @@ async function loadFromHash(){
     if (!selectedParams.size) selectedParams.add("PM2.5");
     renderParams();
   }
-  // dev=iot:xxx,epa:板橋；舊格式 device=xxx 一律視為微型感測器
+  // dev=iot:xxx,epa:新莊,moenv:板橋；舊格式 device=xxx 一律視為微型感測器
+  // 前綴必須涵蓋 SOURCES 的**每一個** key：漏掉 moenv 會讓開放資料的測站
+  // 在分享連結與「記住的測站」裡都還原不回來（整串被當成微型感測器的編號）。
   const raw = p.get("dev") || p.get("device") || "";
   const items = raw.split(",").map(s => s.trim()).filter(Boolean);
   if (!items.length) return;
-  for (const it of items.slice(0, MAX_STATIONS)){
-    const m = it.match(/^(iot|epa):(.*)$/);
-    await addDevice(m ? m[2] : it, m ? m[1] : "iot");
+  const pre = new RegExp("^(" + Object.keys(SOURCES).join("|") + "):(.*)$");
+  const wanted = items.slice(0, MAX_STATIONS);
+  restoring = restored;                       // 回復途中不要動到記憶（見 rememberHash）
+  try {
+    for (const it of wanted){
+      const m = it.match(pre);
+      await addDevice(m ? m[2] : it, m ? m[1] : "iot");
+    }
+  } finally { restoring = false; }
+
+  // 記住的站沒有全部回來，多半是開放資料的站需要 api_key 而金鑰沒存。
+  // 這個警告要**留到載入結束**才顯示——直接 setStatus 會被隨後 loadObservations()
+  // 的狀態整個蓋掉，使用者根本看不到。
+  const missing = wanted.length - picked.length;
+  if (restored && missing > 0){
+    const needKey = wanted.some(it => it.startsWith("moenv:")) && !moenvKey();
+    pendingNotes.push(`記住的 ${wanted.length} 個測站有 ${missing} 個沒能回復。` + (needKey
+      ? "其中有「國家測站（環境部開放資料）」的站，那個來源需要 api_key——切到那個分頁貼上金鑰"
+        + "（可勾「記住這支金鑰」）後重新整理就會回來。記住的清單沒有被清掉。"
+      : "可能是來源暫時連不上，重新整理再試一次。記住的清單沒有被清掉。"));
+    if (!picked.length)
+      setStatus(`記住的 ${wanted.length} 個測站都沒能回復。`, "warn", pendingNotes.pop());
   }
   if (p.get("focus")){
     const fp = $("focusParam");
@@ -2387,6 +2471,8 @@ function setSource(src){
   // 已經勾了「記住」時，邊打邊存；沒勾就完全不碰 localStorage
   $("moenvKey").addEventListener("input", () => { if ($("moenvKeep").checked) persistKey(); });
   $("moenvForget").addEventListener("click", forgetKey);
+  $("forgetView").addEventListener("click", forgetView);
+  updateForgetView();
   $("listEpaBtn").addEventListener("click", listEpaStations);
   $("diagBtn").addEventListener("click", runEpaDiag);
   $("moenvBtn").addEventListener("click", moenvProbe);

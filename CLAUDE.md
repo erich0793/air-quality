@@ -252,13 +252,26 @@
   UI 上要寫明「同一個 origin（整個 `<帳號>.github.io`）底下的網頁共用同一份 localStorage，
   公用裝置不要勾」；所有讀寫都包 try/catch（無痕模式會丟例外，不得讓頁面壞掉）。
   **金鑰仍然永遠不進 hash、不經過 proxy 前綴、診斷輸出一律遮蔽成 `***`。**
-  除了這一項之外，其他任何狀態都不准再往 localStorage 塞。
+- **localStorage 的第二個例外：上一次的 hash**（`HASH_STORE = "airq.lastview"`，
+  2026-08-23 由使用者要求加入）。網址沒帶 hash 時才拿它回復，**別人分享的連結一定勝出**。
+  存的是整個 hash 字串而不是另一套格式，所以日後 hash 加欄位不用改這裡。
+  **回復途中 `restoring` 為 true，此時不得寫入**：某一站當下加不回來時清單會是空的，
+  若照常寫入就會把記憶當成「使用者清空了」而刪掉（金鑰沒存一次，記憶就永久消失）。
+  除了這兩項之外，其他任何狀態都不准再往 localStorage 塞。
 - **兩個 endpoint**：`SOURCES.iot` / `SOURCES.epa` 各自對應一個輸入框，切換 tab 只換來源與提示文字。
   新增第三個來源就往 `SOURCES` 加一筆。
 - **國家測站一律走清單快取且不在伺服器端過濾**（`fetchEpaStations()`）：先試名稱關鍵字的子集，
   只有在它 ≥ 77 站時才採用，否則整份抓回來存 `epaCache`。UI 先選縣市再選測站，
   authority 只是可選的下拉篩選，預設不篩掉任何站。
   **不要退回用 `$filter` 查單站或用 authority 過濾**——實測兩者都會漏站（板橋就是這樣消失的）。
+- **`dev=` 的來源前綴要涵蓋 `SOURCES` 的每一個 key**：`loadFromHash()` 的正規表示式
+  由 `Object.keys(SOURCES)` 產生，不要寫死。曾經只寫 `(iot|epa)`，導致 `moenv:` 的測站
+  在分享連結與「記住的測站」裡都還原不回來（整串被當成微型感測器的裝置編號）。
+- **開放資料的數值不可以只靠 `Number()` 判斷有效性**：`Number("")` 與 `Number(" ")` 都是 **0**
+  不是 NaN，會把「這個小時沒回報」變成「這個小時是 0 µg/m³」——憑空生出資料點並把平均拉低。
+  `moenvNum()` 先用正規表示式擋掉空字串與非數字，真正的 `"0"` 才留著。
+- **`setStatus` 在 `loadObservations()` 之前呼叫會被蓋掉**：載入結束時狀態列是整個重寫的。
+  要讓訊息活過載入，push 進 `pendingNotes`，`loadObservations()` 會併進它的 warns。
 - **比對不要假設欄位名**：`stationHaystack()` 把 `name` 與 `properties` 裡所有字串值一起搜，
   `countyOf()` 也會在 properties 裡找結尾是「縣／市」的值。不同來源的欄位命名不一致，
   寫死欄位名就會漏站。
