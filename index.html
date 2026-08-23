@@ -37,6 +37,10 @@
   .panel-title .count{color:var(--accent);font-weight:600;letter-spacing:.04em;text-transform:none}
 
   label.field{display:block;margin-bottom:11px}
+  div.field{margin-bottom:11px}
+  div.field>label{display:block}
+  label.keep{display:flex;align-items:center;gap:6px;margin-top:6px;font-size:12px;color:var(--ink-2);cursor:pointer}
+  label.keep input{width:auto;margin:0}
   label.field > span{display:block;font-size:12px;color:var(--ink-2);margin-bottom:4px;font-weight:500}
   input[type=text],input[type=number],input[type=date],select{
     width:100%;padding:8px 9px;font-family:var(--mono);font-size:13px;
@@ -170,10 +174,21 @@
           <button type="button" class="tab" id="tabEpa" aria-pressed="false">國家測站 STA<small>66 站 · 近 2 小時</small></button>
         </div>
 
-        <label class="field" id="moenvKeyBox" style="display:none">
-          <span>環境部開放資料 api_key（<strong>必填</strong>；不會存進瀏覽器，也不會寫進網址）</span>
-          <input type="text" id="moenvKey" placeholder="到 data.moenv.gov.tw 註冊後取得" autocomplete="off" spellcheck="false">
-        </label>
+        <div class="field" id="moenvKeyBox" style="display:none">
+          <label>
+            <span>環境部開放資料 api_key（<strong>必填</strong>；<strong>不會</strong>寫進網址，分享連結不帶金鑰）</span>
+            <input type="text" id="moenvKey" placeholder="到 data.moenv.gov.tw 註冊後取得" autocomplete="off" spellcheck="false">
+          </label>
+          <label class="keep">
+            <input type="checkbox" id="moenvKeep">
+            <span>記住這支金鑰（只存在這台裝置的瀏覽器）</span>
+          </label>
+          <p class="hint" id="moenvKeepHint" style="margin:4px 0 0">
+            勾了才會存。同一個 <code>github.io</code> 帳號底下的其他網頁讀得到同一份儲存空間，
+            公用電腦請不要勾。<button type="button" class="ghost" id="moenvForget"
+            style="padding:2px 8px;font-size:11px">清除已存的金鑰</button>
+          </p>
+        </div>
 
         <label class="field">
           <span id="inputLabel">裝置編號（不是裝置名稱）</span>
@@ -438,7 +453,7 @@ const SOURCES = {
     hint:'環境部環境資料開放平臺（data.gov.tw 資料集 40448），**全部 77 站都有，含板橋、土城**，'
        + '每小時一筆、可回溯約 <strong>4 天</strong>（比下一個分頁的 STA 好很多）。'
        + '需要 api_key：到 <a href="https://data.moenv.gov.tw" target="_blank" rel="noopener">data.moenv.gov.tw</a> '
-       + '註冊會員後取得，貼在上方欄位。金鑰不會被儲存，關掉頁面就要重貼。'
+       + '註冊會員後取得，貼在上方欄位。預設關掉頁面就要重貼；勾「記住這支金鑰」才會留在這台裝置上。'
   },
   epa: {
     key:"epa", label:"國家空品測站 STA", badge:"STA",
@@ -718,7 +733,7 @@ async function addDevice(q, src){
     if (e instanceof MissingKeyError){
       setStatus("環境部開放資料需要 api_key。", "warn",
         "到 <a href=\"https://data.moenv.gov.tw\" target=\"_blank\" rel=\"noopener\">data.moenv.gov.tw</a> " +
-        "註冊會員取得後，貼進上方的 api_key 欄位再試一次。金鑰不會被儲存。");
+        "註冊會員取得後，貼進上方的 api_key 欄位再試一次。要免得每次重貼，可勾「記住這支金鑰」。");
       $("addBtn").disabled = false;
       return;
     }
@@ -767,9 +782,53 @@ async function addDevice(q, src){
 
 /* 與 SensorThings 完全不同的一支 API：需要 api_key、回應最外層是陣列、
    時間欄位已經是台灣時間（沒有時區標記），所以解析方式也不同。
-   金鑰只放在記憶體與請求網址，不寫進 hash、不進 localStorage、不經過 proxy 前綴。 */
+   金鑰**永遠不寫進 hash**（hash 是拿來分享的）、不經過 proxy 前綴、診斷輸出一律遮蔽。
+   要不要留在這台裝置上由使用者自己勾（見 KEY_STORE）。 */
 const moenvKey  = () => $("moenvKey").value.trim();
 const moenvBase = () => $("endpointMoenv").value.trim().replace(/\/$/,"");
+
+/* 金鑰的本機保存。
+   本專案其他狀態一律走 URL hash、不碰 localStorage（見 CLAUDE.md），
+   這裡是**唯一的例外**且必須由使用者主動勾選：金鑰不能放進 hash（那是要分享的），
+   但手機使用者每次重開都要重貼一長串又不實際。
+   風險已寫在 UI 上：同一個 origin（例如整個 <帳號>.github.io）底下的網頁共用同一份
+   localStorage，所以公用裝置不該勾。 */
+const KEY_STORE = "airq.moenv.key";
+
+function loadSavedKey(){
+  let saved = null;
+  try { saved = localStorage.getItem(KEY_STORE); }
+  catch (e){ /* 無痕模式或瀏覽器封鎖站台資料時會丟例外，當成沒存過 */ }
+  if (saved){
+    $("moenvKey").value = saved;
+    $("moenvKeep").checked = true;
+  }
+  updateForgetBtn();
+}
+
+function persistKey(){
+  const keep = $("moenvKeep").checked, k = moenvKey();
+  try {
+    if (keep && k) localStorage.setItem(KEY_STORE, k);
+    else localStorage.removeItem(KEY_STORE);
+  } catch (e){
+    if (keep) setStatus("這個瀏覽器不允許儲存站台資料，金鑰只會留在這一次的分頁裡。", "warn");
+  }
+  updateForgetBtn();
+}
+
+function forgetKey(){
+  try { localStorage.removeItem(KEY_STORE); } catch (e){ /* 同上，沒存成功也就沒得刪 */ }
+  $("moenvKeep").checked = false;
+  updateForgetBtn();
+  setStatus("已清除存在這台裝置上的 api_key。欄位裡的值還在，重新整理後就不會回來了。", "");
+}
+
+function updateForgetBtn(){
+  let has = false;
+  try { has = !!localStorage.getItem(KEY_STORE); } catch (e){ has = false; }
+  $("moenvForget").style.display = has ? "" : "none";
+}
 
 let moenvCache = null;   // aqx_p_432 的全站快照，用來當測站清單
 
@@ -1624,8 +1683,12 @@ async function loadObservations(){
         warns.push(hinfo
           ? `「${lbl}」：API 只保留 ${rangeText(st.range)}的觀測值，更早的部分改由 repo 的歷史檔補上` +
             `（${hinfo.first ? fmtStamp(Date.parse(hinfo.first)) + " 起" : ""}，共 ${hinfo.rows} 列）。`
-          : `「${lbl}」：這個來源只保留 ${rangeText(st.range)}的觀測值，` +
-            `比要求的 ${days} 天短。更早的資料要走 history.colife.org.tw 批次下載，API 拿不到。`);
+          // 沒有 repo 歷史檔＝這台裝置還沒回填。別叫使用者自己去批次下載：
+          // 那些檔案每天每測項約 220 MB 且 CORS 被擋，瀏覽器做不到（已實測）。
+          : `「${lbl}」：API 只保留 ${rangeText(st.range)}的觀測值，比要求的 ${days} 天短，` +
+            `而這台裝置（${st.stationID || "編號不明"}）還沒有預先萃取好的歷史檔。` +
+            `跨日資料要先在 repo 跑一次「回填 history 歷史資料」的 workflow 把它加進來${
+              man ? "" : "（本站目前完全沒有 data/ 歷史檔，可能是還沒部署新版）"}。`);
         renderPicked();
       }
       if (hinfo && man.source_tz_verified === false){
@@ -2319,6 +2382,11 @@ function setSource(src){
     const q = SOURCES[curSrc].demo;
     $("deviceInput").value = q; addDevice(q);
   });
+  loadSavedKey();
+  $("moenvKeep").addEventListener("change", persistKey);
+  // 已經勾了「記住」時，邊打邊存；沒勾就完全不碰 localStorage
+  $("moenvKey").addEventListener("input", () => { if ($("moenvKeep").checked) persistKey(); });
+  $("moenvForget").addEventListener("click", forgetKey);
   $("listEpaBtn").addEventListener("click", listEpaStations);
   $("diagBtn").addEventListener("click", runEpaDiag);
   $("moenvBtn").addEventListener("click", moenvProbe);

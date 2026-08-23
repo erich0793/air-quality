@@ -242,9 +242,17 @@
   （已經因此白跑過兩次排程。）
 - **`--tz` 沒有預設值**，且與既有 `manifest.source_tz` 不一致時以離開碼 6 中止：
   同一份 CSV 混進兩種時區解讀，會有一半的列時間錯 8 小時，而且從檔案外觀看不出來。
-- **不使用 `localStorage` / `sessionStorage`**。狀態一律存在 URL hash
+- **不使用 `localStorage` / `sessionStorage`**（**唯一例外見下一條**）。狀態一律存在 URL hash
   （`#dev=iot:13580653094,epa:板橋&params=PM2.5,O3&days=7&end=2026-08-19&focus=PM2.5`），
   這同時提供可分享／可加書籤的深連結。舊格式 `#device=<id>` 仍相容，一律視為微型感測器。
+- **localStorage 的唯一例外：環境部開放資料的 api_key**（`KEY_STORE = "airq.moenv.key"`，
+  2026-08-23 由使用者要求加入）。理由：金鑰**不能**放進 hash（hash 是拿來分享的，會外洩），
+  但手機使用者每次重開都要重貼一長串不實際。
+  **必要條件，不得放寬**：預設不勾、使用者主動勾選才寫入；提供清除按鈕；
+  UI 上要寫明「同一個 origin（整個 `<帳號>.github.io`）底下的網頁共用同一份 localStorage，
+  公用裝置不要勾」；所有讀寫都包 try/catch（無痕模式會丟例外，不得讓頁面壞掉）。
+  **金鑰仍然永遠不進 hash、不經過 proxy 前綴、診斷輸出一律遮蔽成 `***`。**
+  除了這一項之外，其他任何狀態都不准再往 localStorage 塞。
 - **兩個 endpoint**：`SOURCES.iot` / `SOURCES.epa` 各自對應一個輸入框，切換 tab 只換來源與提示文字。
   新增第三個來源就往 `SOURCES` 加一筆。
 - **國家測站一律走清單快取且不在伺服器端過濾**（`fetchEpaStations()`）：先試名稱關鍵字的子集，
