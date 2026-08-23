@@ -18,20 +18,30 @@
 
 | 檔案 | 狀態 |
 |---|---|
-| `index.html` | 單檔靜態網頁，兩個資料來源（微型感測器＋國家空品測站），多測項疊圖 |
-| `worker.js` | Cloudflare Worker CORS proxy，備援用，尚未部署 |
+| `index.html` | 單檔靜態網頁，三個資料來源（微型感測器、國家測站 STA、環境部開放資料），多測項疊圖 |
+| `scripts/hist_extract.py` | 從 history 站萃取指定裝置的歷史觀測值（只用標準函式庫） |
+| `.github/workflows/hist-backfill.yml` | 手動回填／探測，五種模式 |
+| `.github/workflows/hist-daily.yml` | 每日增量（台灣時間 05:00）＋ 存 API 快照 ＋ 自動時區判定 |
+| `data/` | 上面兩個 workflow 的產出，網頁以同源方式讀取 |
+| `worker.js` | Cloudflare Worker CORS proxy，備援用，尚未部署（目前三個來源都不需要） |
 | `README.md` | 部署與使用說明 |
 
-部署目標：GitHub Pages（純靜態，無 build step）。
+部署目標：GitHub Pages（純靜態，無 build step；`data/` 是 workflow 的產出，不是 build）。
 
 **驗證狀態**：微型感測器路線由使用者在真實瀏覽器實測可用（裝置編號 `13580653094`）。
 國家測站 endpoint 已實測可連（`sta.colife.org.tw` 那台），但**還沒真的加成功過一站**，
 回應欄位與時間格式待覆核。「來源間偏差」面板有已知的方法學問題，
 **在「下一輪必修」處理完之前，那個面板的數字不得用於任何結論**。
 
-**最重要的現實限制：兩個 STA endpoint 都只保留最近幾小時的觀測值**（微型感測器實測約 2 小時）。
-「往前天數」選再多也拿不到更早的資料——這不是程式的 bug，是資料來源的設計。
-長區間必須走 <https://history.colife.org.tw> 的批次下載，那條路線還沒做。
+**最重要的現實限制：三個 API 都只保留近期觀測值**（微型感測器與 STA 實測約 2 小時，
+環境部開放資料約 4 天）。「往前天數」選再多，**API 那一段**也拿不到更早的資料
+——這不是程式的 bug，是資料來源的設計。
+
+**微型感測器的跨日資料已經解決**：由 GitHub Actions 事先從
+<https://history.colife.org.tw> 萃取成 `data/` 裡的小 CSV，網頁同源讀取後與 API 的
+近 2 小時合併。`13580653094` 已回填 2026-08-08～21 的 PM2.5 與 Relative humidity。
+**但來源時間欄位的時區只有推論、尚未逐筆驗證**（見「未驗證」第 6 項）——
+`manifest.json` 的 `source_tz_verified` 變成 true 之前，歷史那一段有整體偏 8 小時的可能。
 
 ---
 
@@ -128,6 +138,20 @@
    但那台主機的實際情形還沒回報過。若只是缺 CORS 標頭，`worker.js` 可以救；
    若是主機不存在，就永久改用 colife。
 
+6. **history 檔 `phenomenonTime` 的時區** — 欄位**沒有時區標記**，猜錯整條歷史曲線會偏 8 小時。
+   目前以「台灣時間」解讀，依據是**逐時剖面**（2026-08-21 全國平均相對濕度：標籤上的最大值在
+   06 時、最小值在 10 時。若標籤是台灣時間就是清晨最濕、上午轉乾，合理；若標籤是 UTC 就變成
+   下午 14 時最濕、18 時最乾，與物理不合）。**這是推論，不是實測驗證。**
+   決定性的驗證要靠 `--api-snapshot` ＋ `--tz-check`：API 的 `phenomenonTime` 明確是 UTC，
+   把 API 那 2 小時存下來，等隔天 history 檔產出後比對同一裝置同一分鐘的數值。
+   已存的快照：`data/_tzcheck/13580653094_Relative-humidity_20260822T152756Z.json`
+   （146 筆，2026-08-22T13:00:38Z ～ 15:25:38Z）。
+   → **待辦**：2026-08-23 之後對 `20260822` 那天的檔案跑「時區判定」，判定成功會寫
+   `data/_tzcheck/CONFIRMED`，`manifest.json` 的 `source_tz_verified` 才會變 true，
+   網頁上的「尚未驗證」警示也才會消失。
+   **若結果是 `utc`**：不能直接重跑覆蓋（會變成兩種解讀混在同一個 CSV 裡），
+   腳本會以離開碼 6 擋下，要先刪掉 `data/iot` 再整批回填。
+
 **確認完請把結果寫回這份 CLAUDE.md，把項目從「未驗證」移到「已驗證」。**
 
 ---
@@ -209,9 +233,26 @@
 
 - **單檔、零依賴**：`index.html` 內含全部 HTML/CSS/JS，不引入框架、不用 npm、不需要 build step。
   維持這個特性，因為部署目標是 GitHub Pages 且要能離線開啟檢視。
-- **不使用 `localStorage` / `sessionStorage`**。狀態一律存在 URL hash
+  （`data/` 是 workflow 的產出，不是 build step；抓不到就靜默略過，頁面照樣能開。）
+- **`scripts/hist_extract.py` 只用 Python 標準函式庫**，不裝任何套件（runner 內建的 python3 即可）。
+- **history 檔的測項代碼一定要先 `--probe`**：站方對不存在的檔名回 **HTTP 200 ＋ HTML 錯誤頁**
+  而不是 404，代碼猜錯會靜默抓到錯的東西。實測只有 `humidity`、`pm25`、`temperature` 三個。
+- **判斷 workflow 有沒有產出要用 `git status --porcelain`，不能用 `git diff --quiet`**：
+  後者看不到未追蹤檔案，`data/` 第一次產生時全是未追蹤檔，會被誤判成「沒有變動」而丟掉。
+  （已經因此白跑過兩次排程。）
+- **`--tz` 沒有預設值**，且與既有 `manifest.source_tz` 不一致時以離開碼 6 中止：
+  同一份 CSV 混進兩種時區解讀，會有一半的列時間錯 8 小時，而且從檔案外觀看不出來。
+- **不使用 `localStorage` / `sessionStorage`**（**唯一例外見下一條**）。狀態一律存在 URL hash
   （`#dev=iot:13580653094,epa:板橋&params=PM2.5,O3&days=7&end=2026-08-19&focus=PM2.5`），
   這同時提供可分享／可加書籤的深連結。舊格式 `#device=<id>` 仍相容，一律視為微型感測器。
+- **localStorage 的唯一例外：環境部開放資料的 api_key**（`KEY_STORE = "airq.moenv.key"`，
+  2026-08-23 由使用者要求加入）。理由：金鑰**不能**放進 hash（hash 是拿來分享的，會外洩），
+  但手機使用者每次重開都要重貼一長串不實際。
+  **必要條件，不得放寬**：預設不勾、使用者主動勾選才寫入；提供清除按鈕；
+  UI 上要寫明「同一個 origin（整個 `<帳號>.github.io`）底下的網頁共用同一份 localStorage，
+  公用裝置不要勾」；所有讀寫都包 try/catch（無痕模式會丟例外，不得讓頁面壞掉）。
+  **金鑰仍然永遠不進 hash、不經過 proxy 前綴、診斷輸出一律遮蔽成 `***`。**
+  除了這一項之外，其他任何狀態都不准再往 localStorage 塞。
 - **兩個 endpoint**：`SOURCES.iot` / `SOURCES.epa` 各自對應一個輸入框，切換 tab 只換來源與提示文字。
   新增第三個來源就往 `SOURCES` 加一筆。
 - **國家測站一律走清單快取且不在伺服器端過濾**（`fetchEpaStations()`）：先試名稱關鍵字的子集，
@@ -243,7 +284,8 @@
 
 ## 待辦（依優先序）
 
-1. **history.colife.org.tw → GitHub Actions 預處理**（進行中） — STA 只留約 2 小時，這條沒做的話，
+1. **history.colife.org.tw → GitHub Actions 預處理**（**主體已完成**，只剩時區的決定性驗證，
+   見「未驗證」第 6 項） — STA 只留約 2 小時，這條沒做的話，
    diurnal pattern、分層統計、兩測點比較全都只能看幾小時，專案的核心情境無法成立。
    **階段 A（已做）**：微型感測器分頁加了「探測 history.colife.org.tw」，
    貼上任一檔案網址即可回報 HTTP 狀態、Content-Type／Length、前 16 bytes（辨識 ZIP／gzip／CSV）、
@@ -257,9 +299,36 @@
    **階段 B（改為伺服器端預處理，已實作）**：`scripts/hist_extract.py` 由 GitHub Actions
    下載→解壓→篩出指定裝置→輸出 `data/iot/<裝置>/<YYYY-MM>.csv`（寬表）與 `data/manifest.json`，
    網頁再以**同源**方式讀取（無 CORS、無金鑰、手機可用）。
-   兩個 workflow：`hist-backfill.yml`（手動回填，含 dry-run）、`hist-daily.yml`（每日增量）。
-   **待辦**：跑一次 dry-run 確認 ZIP 內欄位與時區、確認 PM2.5 的檔名代碼、前端讀取與合併。
+   兩個 workflow：`hist-backfill.yml`（手動回填，五種模式）、`hist-daily.yml`（每日增量）。
+   **階段 B 的實測結果（2026-08-21／22，由 Actions 實跑）**：
+   - **ZIP 內只有一個 CSV**，約 809 MB、**13,741,955 列／天**（全國所有裝置混在一起）。
+     表頭 `stationID, Relative humidity, phenomenonTime, StationLongitude, StationLatitude`，
+     資料例 `13580653094, 73.46, 2026-08-19 00:00:00, 121.124306, 25.062393`。
+     欄位自動偵測的結果正確，不需要 `--col-*`。
+   - **目標裝置 `13580653094` 每天剛好 1440 列**＝每分鐘一筆，與 API 實測的取樣間隔一致。
+   - **檔名裡的測項代碼只有 `humidity`、`pm25`、`temperature` 三個**（正好對應該裝置的三個
+     datastream）。`pm2.5`、`pm2_5`、`PM25`、`PM2.5`、`pm10`、`temp`、`voc`、`co2` 都**回 HTTP 200
+     但內容是 HTML 錯誤頁**——站方不回 404，代碼猜錯會靜默抓到錯的東西，所以一定要先用
+     `--probe` 確認回的開頭是不是 `504b0304`（ZIP）。
+   - **`phenomenonTime` 沒有時區標記**，見下方「未驗證」第 6 項，判定完成前不得當成已知。
+   **踩過的坑（不要重蹈）**：`git diff --quiet -- data` 看不到**未追蹤**的檔案。
+   `data/` 第一次產生時全是未追蹤檔，兩次排程執行其實都成功萃取了 1440 列，
+   卻都被判成「沒有變動」而丟掉。判斷有無產出要用 `git status --porcelain`。
    完整計畫見 `/root/.claude/plans/history-colife-org-tw-swift-cupcake.md`。
+   **階段 C（前端合併，已做）**：網頁以同源方式讀 `data/manifest.json` 與
+   `data/iot/<裝置>/<YYYY-MM>.csv`，補在 API 那 2 小時的前面。
+   合併以**分鐘**為鍵去重（兩邊的秒數都不固定：history 實測有 `:00` 也有 `:29`、`:38`；
+   API 實測 `:30`、`:38`），重疊的分鐘以 API 為準。狀態列與圖例**分開標示**兩段筆數。
+   `manifest.source_tz_verified` 為 false 時，狀態列會明講來源時區尚未逐筆驗證。
+   **實際回填狀況（2026-08-22）**：`13580653094` 已回填 2026-08-08～21 的 **PM2.5（17,526 列）
+   與 Relative humidity（17,528 列）**，每分鐘一筆，合併成同一張寬表（`time_utc,PM2.5,Relative humidity`）。
+   兩者列數差 2 是因為 08-09 有 2 個時標只有 RH 沒有 PM2.5，寬表留空格，**不補值**。
+   有了 RH 就能做濕度分層（但那個面板的方法學問題仍未修，見「下一輪必修」）。
+   **下載速度會被限速**：同樣 14 天，PM2.5 跑 10 分鐘、濕度跑約 50 分鐘——
+   一小時內從該站拉了約 6 GB。要回填更長區間請分批、隔開時間跑。
+   （已在下載進度加印 MB/s，才分得出「被限速」與「連線卡死」。）**來源自己就有缺**：08-12 完全沒有、08-11／08-13 明顯偏少，
+   對照下載大小可確認是站方的日檔本身不完整（08-12 只有 88 MB／547 萬列，正常日 220 MB／1,374 萬列），
+   不是本專案的問題。缺的維持缺漏，不補值。
    **時效**：搜尋顯示民生公共物聯網計畫已於 2025-12-31 結束、資料服務**只提供到 2026-12-01**，
    之後轉移平台（未向官方求證）。這條路線有到期日，也提高了第 6 項自行累積的價值。
 2. **修「來源間偏差」面板的方法學問題** — 見上方「下一輪必修」六項。

@@ -22,24 +22,59 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: 抓前一天（各測項）
+      - name: 存 API 快照（供時區驗證，且過了就再也拿不到）
+        continue-on-error: true
         run: |
           set -euo pipefail
-          DATE=$(date -u -d "yesterday" +%Y%m%d)
-          echo "處理日期（台灣時間的前一天）：$DATE"
+          python3 scripts/hist_extract.py --api-snapshot --devices "$DEVICES" \
+            --label "Relative humidity" --out data
+
+      - name: 抓前兩天（各測項）
+        run: |
+          set -euo pipefail
+          # runner 是 UTC，這裡要的是「台灣時間」的日期，所以先 +8 小時再算。
+          # 抓兩天而不是一天：站方約在台灣時間 03:00 才放上前一日的檔案，
+          # 萬一延遲就會整天漏掉；寫入本來就以時間去重，重複抓不會有副作用。
+          FROM=$(date -u -d "+8 hours -2 days" +%Y%m%d)
+          TO=$(date -u -d "+8 hours -1 day" +%Y%m%d)
+          echo "處理台灣時間 $FROM ～ $TO"
           # param=檔名代碼；label=網頁上的測項名稱，兩者必須對得起來
           run_one () {
-            python3 scripts/hist_extract.py --date "$DATE" --param "$1" --label "$2" \
+            python3 scripts/hist_extract.py --date "$FROM" --until "$TO" \
+              --param "$1" --label "$2" --skip-missing \
               --devices "$DEVICES" --tz "$TZ_SOURCE" --out data
           }
+          # 2026-08-22 以 --probe 實測：只有 humidity、pm25、temperature 三個代碼存在
+          # （pm2.5、pm2_5、PM25、pm10、temp、voc、co2 都是 HTTP 200 但回 HTML 錯誤頁）。
+          # 這三個正好對應該裝置的三個 datastream。temperature 目前沒用到就不抓，
+          # 每個測項每天都是一次 ~220 MB 的下載。
+          run_one pm25 "PM2.5"
           run_one humidity "Relative humidity"
-          # TODO: dry-run 確認 PM2.5 的檔名代碼後打開下面這行
-          # run_one pm25 "PM2.5"
+
+      # 來源的時間欄位沒有時區標記，猜錯整條歷史會偏 8 小時。
+      # 昨天存的 API 快照（phenomenonTime 明確是 UTC）今天才有對應的 history 檔可比，
+      # 所以判定只能隔天做。判定成功會寫下 CONFIRMED，之後這一步就自動跳過。
+      - name: 時區判定（尚未確認時才跑）
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          if [ -f data/_tzcheck/CONFIRMED ]; then
+            echo "時區已確認（$(head -1 data/_tzcheck/CONFIRMED)），跳過"
+            exit 0
+          fi
+          if ! ls data/_tzcheck/*.json >/dev/null 2>&1; then
+            echo "還沒有 API 快照可比對，跳過"
+            exit 0
+          fi
+          python3 scripts/hist_extract.py --tz-check --devices "$DEVICES" \
+            --param humidity --label "Relative humidity" --skip-missing --out data
 
       - name: 有變動才 commit
         run: |
           set -euo pipefail
-          if git diff --quiet -- data; then
+          # 用 git status 而不是 git diff：data/ 第一次產生時是「未追蹤」檔案，
+          # git diff 看不到未追蹤檔案，會誤判成沒有變動而把抓到的資料丟掉。
+          if [ -z "$(git status --porcelain -- data)" ]; then
             echo "data/ 沒有變動，不提交"
             exit 0
           fi
@@ -47,4 +82,7 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add data
           git commit -m "每日增量：$(date -u -d yesterday +%Y-%m-%d)"
+          # 併發或落後時先 rebase 再推，避免非快轉被拒。
+          # 要 rebase 到「這個 workflow 正在跑的分支」，寫死 main 會在功能分支上撞成衝突。
+          git pull --rebase origin "$GITHUB_REF_NAME"
           git push

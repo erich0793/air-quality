@@ -37,6 +37,10 @@
   .panel-title .count{color:var(--accent);font-weight:600;letter-spacing:.04em;text-transform:none}
 
   label.field{display:block;margin-bottom:11px}
+  div.field{margin-bottom:11px}
+  div.field>label{display:block}
+  label.keep{display:flex;align-items:center;gap:6px;margin-top:6px;font-size:12px;color:var(--ink-2);cursor:pointer}
+  label.keep input{width:auto;margin:0}
   label.field > span{display:block;font-size:12px;color:var(--ink-2);margin-bottom:4px;font-weight:500}
   input[type=text],input[type=number],input[type=date],select{
     width:100%;padding:8px 9px;font-family:var(--mono);font-size:13px;
@@ -170,10 +174,21 @@
           <button type="button" class="tab" id="tabEpa" aria-pressed="false">國家測站 STA<small>66 站 · 近 2 小時</small></button>
         </div>
 
-        <label class="field" id="moenvKeyBox" style="display:none">
-          <span>環境部開放資料 api_key（<strong>必填</strong>；不會存進瀏覽器，也不會寫進網址）</span>
-          <input type="text" id="moenvKey" placeholder="到 data.moenv.gov.tw 註冊後取得" autocomplete="off" spellcheck="false">
-        </label>
+        <div class="field" id="moenvKeyBox" style="display:none">
+          <label>
+            <span>環境部開放資料 api_key（<strong>必填</strong>；<strong>不會</strong>寫進網址，分享連結不帶金鑰）</span>
+            <input type="text" id="moenvKey" placeholder="到 data.moenv.gov.tw 註冊後取得" autocomplete="off" spellcheck="false">
+          </label>
+          <label class="keep">
+            <input type="checkbox" id="moenvKeep">
+            <span>記住這支金鑰（只存在這台裝置的瀏覽器）</span>
+          </label>
+          <p class="hint" id="moenvKeepHint" style="margin:4px 0 0">
+            勾了才會存。同一個 <code>github.io</code> 帳號底下的其他網頁讀得到同一份儲存空間，
+            公用電腦請不要勾。<button type="button" class="ghost" id="moenvForget"
+            style="padding:2px 8px;font-size:11px">清除已存的金鑰</button>
+          </p>
+        </div>
 
         <label class="field">
           <span id="inputLabel">裝置編號（不是裝置名稱）</span>
@@ -401,7 +416,7 @@ const MAX_STATIONS  = 3;
 const CONCURRENCY   = 4;      // 同時對來源站的請求數上限
 const MAX_PAGES     = 200;    // 單一序列的分頁上限，避免失控迴圈
 const PAGE_SIZE     = 100;    // 伺服器單頁上限
-const BUILD         = "2026-08-20c";   // 版本標記，診斷輸出與頁尾都會顯示，用來確認是否讀到新版
+const BUILD         = "2026-08-22a";   // 版本標記，診斷輸出與頁尾都會顯示，用來確認是否讀到新版
 
 /* 環境部開放資料的欄位 → 本頁的測項名稱。PM2.5 用同一個名稱，才能跟微型感測器疊在同一張圖。
    實測欄位：aqx_p_488 用 windspeed／datacreationdate，aqx_p_432 用 wind_speed／publishtime。 */
@@ -438,7 +453,7 @@ const SOURCES = {
     hint:'環境部環境資料開放平臺（data.gov.tw 資料集 40448），**全部 77 站都有，含板橋、土城**，'
        + '每小時一筆、可回溯約 <strong>4 天</strong>（比下一個分頁的 STA 好很多）。'
        + '需要 api_key：到 <a href="https://data.moenv.gov.tw" target="_blank" rel="noopener">data.moenv.gov.tw</a> '
-       + '註冊會員後取得，貼在上方欄位。金鑰不會被儲存，關掉頁面就要重貼。'
+       + '註冊會員後取得，貼在上方欄位。預設關掉頁面就要重貼；勾「記住這支金鑰」才會留在這台裝置上。'
   },
   epa: {
     key:"epa", label:"國家空品測站 STA", badge:"STA",
@@ -718,7 +733,7 @@ async function addDevice(q, src){
     if (e instanceof MissingKeyError){
       setStatus("環境部開放資料需要 api_key。", "warn",
         "到 <a href=\"https://data.moenv.gov.tw\" target=\"_blank\" rel=\"noopener\">data.moenv.gov.tw</a> " +
-        "註冊會員取得後，貼進上方的 api_key 欄位再試一次。金鑰不會被儲存。");
+        "註冊會員取得後，貼進上方的 api_key 欄位再試一次。要免得每次重貼，可勾「記住這支金鑰」。");
       $("addBtn").disabled = false;
       return;
     }
@@ -767,9 +782,53 @@ async function addDevice(q, src){
 
 /* 與 SensorThings 完全不同的一支 API：需要 api_key、回應最外層是陣列、
    時間欄位已經是台灣時間（沒有時區標記），所以解析方式也不同。
-   金鑰只放在記憶體與請求網址，不寫進 hash、不進 localStorage、不經過 proxy 前綴。 */
+   金鑰**永遠不寫進 hash**（hash 是拿來分享的）、不經過 proxy 前綴、診斷輸出一律遮蔽。
+   要不要留在這台裝置上由使用者自己勾（見 KEY_STORE）。 */
 const moenvKey  = () => $("moenvKey").value.trim();
 const moenvBase = () => $("endpointMoenv").value.trim().replace(/\/$/,"");
+
+/* 金鑰的本機保存。
+   本專案其他狀態一律走 URL hash、不碰 localStorage（見 CLAUDE.md），
+   這裡是**唯一的例外**且必須由使用者主動勾選：金鑰不能放進 hash（那是要分享的），
+   但手機使用者每次重開都要重貼一長串又不實際。
+   風險已寫在 UI 上：同一個 origin（例如整個 <帳號>.github.io）底下的網頁共用同一份
+   localStorage，所以公用裝置不該勾。 */
+const KEY_STORE = "airq.moenv.key";
+
+function loadSavedKey(){
+  let saved = null;
+  try { saved = localStorage.getItem(KEY_STORE); }
+  catch (e){ /* 無痕模式或瀏覽器封鎖站台資料時會丟例外，當成沒存過 */ }
+  if (saved){
+    $("moenvKey").value = saved;
+    $("moenvKeep").checked = true;
+  }
+  updateForgetBtn();
+}
+
+function persistKey(){
+  const keep = $("moenvKeep").checked, k = moenvKey();
+  try {
+    if (keep && k) localStorage.setItem(KEY_STORE, k);
+    else localStorage.removeItem(KEY_STORE);
+  } catch (e){
+    if (keep) setStatus("這個瀏覽器不允許儲存站台資料，金鑰只會留在這一次的分頁裡。", "warn");
+  }
+  updateForgetBtn();
+}
+
+function forgetKey(){
+  try { localStorage.removeItem(KEY_STORE); } catch (e){ /* 同上，沒存成功也就沒得刪 */ }
+  $("moenvKeep").checked = false;
+  updateForgetBtn();
+  setStatus("已清除存在這台裝置上的 api_key。欄位裡的值還在，重新整理後就不會回來了。", "");
+}
+
+function updateForgetBtn(){
+  let has = false;
+  try { has = !!localStorage.getItem(KEY_STORE); } catch (e){ has = false; }
+  $("moenvForget").style.display = has ? "" : "none";
+}
 
 let moenvCache = null;   // aqx_p_432 的全站快照，用來當測站清單
 
@@ -1494,6 +1553,90 @@ function rangeText(r){
   return `${fmtStamp(r.oldest)} ～ ${fmtStamp(r.newest)}（約 ${fmtSpan(r.newest - r.oldest)}）`;
 }
 
+/* ============ repo 內的歷史資料（由 GitHub Actions 事先萃取） ============
+   微型感測器的 API 只保留約 2 小時，跨日資料只存在 history.colife.org.tw 的每日 ZIP，
+   而那些檔案每天每測項約 220 MB 且 CORS 被擋，瀏覽器不可能自己處理。
+   所以改由 GitHub Actions 在伺服器端篩成小 CSV 放進 repo，這裡用**同源**方式讀回來
+   （無 CORS、無金鑰、手機可用），再與 API 的近 2 小時併成一條序列。
+   兩段的來源與筆數必須分開標示，不得混為一談。 */
+
+let histManifest;                    // undefined＝還沒查；null＝沒有；物件＝有
+const histCache = new Map();         // "<裝置>/<YYYY-MM>" → 解析後的表，或 null
+
+// 以本頁所在目錄為基準，GitHub Pages 放在子路徑底下也能對
+const histBase = () => location.href.replace(/[?#].*$/, "").replace(/[^/]*$/, "") + "data/";
+
+async function loadHistManifest(){
+  if (histManifest !== undefined) return histManifest;
+  histManifest = null;
+  try {
+    const r = await fetch(histBase() + "manifest.json", {cache:"no-cache"});
+    if (r.ok) histManifest = await r.json();
+  } catch (e){
+    // 還沒有任何資料，或以 file:// 開啟時讀不到相對路徑——兩種都不是錯誤，靜默略過
+  }
+  return histManifest;
+}
+
+function parseHistCsv(text){
+  const lines = text.trim().split(/\r?\n/);
+  if (lines.length < 2) return null;
+  const head = lines[0].split(",");
+  const rows = [];
+  for (let i = 1; i < lines.length; i++){
+    const c = lines[i].split(",");
+    const ms = Date.parse(c[0]);          // time_utc 是 ISO UTC，帶 Z
+    if (isFinite(ms)) rows.push([ms, c]);
+  }
+  return {head, rows};
+}
+
+async function histMonth(device, month){
+  const key = device + "/" + month;
+  if (histCache.has(key)) return histCache.get(key);
+  let out = null;
+  try {
+    const r = await fetch(`${histBase()}iot/${encodeURIComponent(device)}/${month}.csv`, {cache:"no-cache"});
+    if (r.ok) out = parseHistCsv(await r.text());
+  } catch (e){ out = null; }
+  histCache.set(key, out);
+  return out;
+}
+
+/* 回傳該裝置該測項在區間內的歷史點；沒有 repo 資料時回 null（與「有檔但 0 筆」不同）。 */
+async function histPoints(device, param, startUTC, endUTC){
+  const man = await loadHistManifest();
+  const info = man && man.devices && man.devices[device];
+  if (!info || !(info.months || []).length) return null;
+  // 檔案以 UTC 的年月分檔，所以要用 UTC 推算涵蓋哪幾個月
+  const want = new Set([new Date(endUTC).toISOString().slice(0,7)]);
+  for (let t = startUTC; t <= endUTC; t += 864e5) want.add(new Date(t).toISOString().slice(0,7));
+  const out = [];
+  for (const m of info.months){
+    if (!want.has(m)) continue;
+    const tbl = await histMonth(device, m);
+    if (!tbl) continue;
+    const ci = tbl.head.indexOf(param);
+    if (ci < 1) continue;                       // 這個月沒有這個測項
+    for (const [ms, c] of tbl.rows){
+      if (ms < startUTC || ms > endUTC) continue;
+      const v = Number(c[ci]);
+      if (c[ci] === "" || !isFinite(v) || v < 0) continue;   // 缺值丟棄，不補值
+      out.push({...taipeiParts(ms), value: v});
+    }
+  }
+  return out.sort((a,b) => a.ms - b.ms);
+}
+
+/* 兩邊的秒數都不固定（history 實測有 :00 也有 :29、:38；API 實測 :30／:38），
+   但那是同一批量測，所以以「分鐘」為鍵去重；重疊處以 API 為準（API 是直接來源）。 */
+function mergeByMinute(hist, api){
+  const byMin = new Map();
+  for (const p of hist) byMin.set(Math.floor(p.ms/60000), p);
+  for (const p of api)  byMin.set(Math.floor(p.ms/60000), p);
+  return [...byMin.values()].sort((a,b) => a.ms - b.ms);
+}
+
 async function loadObservations(){
   if (!picked.length) return;
   const days = parseInt($("days").value,10);
@@ -1532,11 +1675,26 @@ async function loadObservations(){
       }
 
       if (!st.range) await probeRange(st);
+      // repo 裡有沒有這台裝置的歷史資料，會改變下面「保留期不足」該怎麼說
+      const man = st.src === "iot" ? await loadHistManifest() : null;
+      const hinfo = man && man.devices && man.devices[st.stationID];
       // 來源保留期比要求的區間短，先講清楚，之後的「涵蓋不足」才不會被誤讀成抓取失敗
       if (st.range && st.range.oldest > startUTC + 3600e3){
-        warns.push(`「${lbl}」：這個來源只保留 ${rangeText(st.range)}的觀測值，` +
-                   `比要求的 ${days} 天短。更早的資料要走 history.colife.org.tw 批次下載，API 拿不到。`);
+        warns.push(hinfo
+          ? `「${lbl}」：API 只保留 ${rangeText(st.range)}的觀測值，更早的部分改由 repo 的歷史檔補上` +
+            `（${hinfo.first ? fmtStamp(Date.parse(hinfo.first)) + " 起" : ""}，共 ${hinfo.rows} 列）。`
+          // 沒有 repo 歷史檔＝這台裝置還沒回填。別叫使用者自己去批次下載：
+          // 那些檔案每天每測項約 220 MB 且 CORS 被擋，瀏覽器做不到（已實測）。
+          : `「${lbl}」：API 只保留 ${rangeText(st.range)}的觀測值，比要求的 ${days} 天短，` +
+            `而這台裝置（${st.stationID || "編號不明"}）還沒有預先萃取好的歷史檔。` +
+            `跨日資料要先在 repo 跑一次「回填 history 歷史資料」的 workflow 把它加進來${
+              man ? "" : "（本站目前完全沒有 data/ 歷史檔，可能是還沒部署新版）"}。`);
         renderPicked();
+      }
+      if (hinfo && man.source_tz_verified === false){
+        warns.push(`「${lbl}」：repo 歷史檔的來源時間是以「${
+          man.source_tz === "utc" ? "UTC" : "台灣時間"}」解讀的，但尚未以 API 快照逐筆驗證。` +
+          `若解讀有誤，歷史那一段會整體偏移 8 小時。`);
       }
 
       const jobs = st.streams.filter(d => selectedParams.has(d.name));
@@ -1561,24 +1719,31 @@ async function loadObservations(){
         const uniq = [];
         for (const p of points) if (!uniq.length || uniq[uniq.length-1].ms !== p.ms) uniq.push(p);
 
-        const cadence = medianStepMin(uniq) || SOURCES[st.src].cadence;
+        // repo 的歷史檔補在 API 那 2 小時的前面，合併成單一序列（以分鐘去重）
+        const hist = st.src === "iot" ? await histPoints(st.stationID, ds.name, startUTC, endUTC) : null;
+        const merged = (hist && hist.length) ? mergeByMinute(hist, uniq) : uniq;
+
+        const cadence = medianStepMin(merged) || SOURCES[st.src].cadence;
         dataset.push({
           station: st, param: ds.name,
           unit: ds.unit || (ds.name === "PM2.5" || /^PM/.test(ds.name) ? "µg/m³" : ""),
-          points: uniq, cadenceMin: cadence
+          points: merged, cadenceMin: cadence,
+          apiCount: uniq.length, histCount: hist ? hist.length : 0
         });
 
         if (res.failed) warns.push(`「${lbl}」${ds.name}：${res.failed} 頁抓取失敗，資料不完整`);
         if (res.capped) warns.push(`「${lbl}」${ds.name}：超過單序列 ${MAX_PAGES} 頁上限，只取回前段`);
-        const retained = st.range && st.range.oldest > startUTC + 3600e3;   // 保留期就比要求短
-        if (uniq.length){
-          const cov = (uniq[uniq.length-1].ms - uniq[0].ms) / 864e5;
+        // 保留期不足，且 repo 的歷史檔也沒補上這個測項——三種成因要分清楚，訊息不可混用
+        const retained = st.range && st.range.oldest > startUTC + 3600e3 && !(hist && hist.length);
+        if (merged.length){
+          const cov = (merged[merged.length-1].ms - merged[0].ms) / 864e5;
           if (cov < days*0.8 && !retained && !res.failed)
             warns.push(`「${lbl}」${ds.name}：實際只涵蓋 ${cov.toFixed(1)} 天（要求 ${days} 天），` +
-                       `這段期間感測器可能離線——來源本身有 ${st.range ? rangeText(st.range) : "更長"} 的資料`);
+                       `這段期間感測器可能離線${hist && hist.length ? "，或 repo 歷史檔還沒回填到這麼早" :
+                       `——來源本身有 ${st.range ? rangeText(st.range) : "更長"} 的資料`}`);
         } else {
           warns.push(`「${lbl}」${ds.name}：${retained
-            ? "要求的區間早於來源的保留期，所以一筆都沒有"
+            ? "要求的區間早於來源的保留期，repo 也還沒有這個測項的歷史檔，所以一筆都沒有"
             : "區間內沒有有效觀測值（感測器離線或該測項無資料）"}`);
         }
       }
@@ -1597,8 +1762,12 @@ async function loadObservations(){
   }
 
   const n = dataset.reduce((a,d) => a + d.points.length, 0);
+  const nHist = dataset.reduce((a,d) => a + (d.histCount || 0), 0);
+  // 兩段資料來源不同，筆數要分開講，不能只給一個總數
+  const split = nHist ? `（repo 歷史檔 ${nHist} 筆 ＋ API 即時 ${
+    dataset.reduce((a,d) => a + (d.apiCount || 0), 0)} 筆，重疊的分鐘以 API 為準）` : "";
   const head = n
-    ? `已載入 ${n} 筆觀測值：${dataset.length} 條序列 / ${new Set(dataset.map(d => d.station.uid)).size} 站 × ${days} 天。`
+    ? `已載入 ${n} 筆觀測值：${dataset.length} 條序列 / ${new Set(dataset.map(d => d.station.uid)).size} 站 × ${days} 天${split}。`
     : "沒有取回任何觀測值。";
   setStatus(head + (warns.length ? "" : ""), n ? (warns.length ? "warn" : "") : "warn",
             warns.length ? "<ul>" + warns.map(w => "<li>" + escHtml(w) + "</li>").join("") + "</ul>" : "");
@@ -1620,11 +1789,16 @@ function renderKey(){
   const seen = new Set();
   box.innerHTML = L.filter(d => !seen.has(d.station.uid) && seen.add(d.station.uid)).map(d => {
     const c = colorOf(d.station);
-    const own = L.filter(x => x.station.uid === d.station.uid).flatMap(x => x.points).map(p => p.ms);
+    const mine = L.filter(x => x.station.uid === d.station.uid);
+    const own = mine.flatMap(x => x.points).map(p => p.ms);
     const span = own.length ? fmtSpan(Math.max(...own) - Math.min(...own)) : "—";
+    // 這一站的序列是不是併了 repo 的歷史檔——來源不同，圖例要講明
+    const nHist = mine.reduce((acc,x) => acc + (x.histCount || 0), 0);
+    const nApi  = mine.reduce((acc,x) => acc + (x.apiCount  || 0), 0);
+    const src = nHist ? ` · 歷史檔 ${nHist} ＋ API ${nApi} 筆` : "";
     return `<span><span class="swatch${isHourly(d) ? " ring" : ""}" style="background:${c};border-color:${c}"></span>${
       escHtml(stationLabel(d.station))}<span class="badge ${d.station.src}">${SOURCES[d.station.src].badge}</span>` +
-      `<span style="color:var(--muted)"> ${span}</span></span>`;
+      `<span style="color:var(--muted)"> ${span}${escHtml(src)}</span></span>`;
   }).join("");
 }
 
@@ -2208,6 +2382,11 @@ function setSource(src){
     const q = SOURCES[curSrc].demo;
     $("deviceInput").value = q; addDevice(q);
   });
+  loadSavedKey();
+  $("moenvKeep").addEventListener("change", persistKey);
+  // 已經勾了「記住」時，邊打邊存；沒勾就完全不碰 localStorage
+  $("moenvKey").addEventListener("input", () => { if ($("moenvKeep").checked) persistKey(); });
+  $("moenvForget").addEventListener("click", forgetKey);
   $("listEpaBtn").addEventListener("click", listEpaStations);
   $("diagBtn").addEventListener("click", runEpaDiag);
   $("moenvBtn").addEventListener("click", moenvProbe);

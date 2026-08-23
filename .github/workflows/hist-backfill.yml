@@ -7,9 +7,20 @@ name: 回填 history 歷史資料（手動）
 on:
   workflow_dispatch:
     inputs:
-      start:
-        description: "起始日 YYYYMMDD"
+      mode:
+        description: "要做什麼"
         required: true
+        default: "時區判定"
+        type: choice
+        options:
+          - "探勘 ZIP 結構（dry-run）"
+          - "探測有哪些測項代碼"
+          - "存 API 快照（時區用）"
+          - "時區判定"
+          - "正式萃取"
+      start:
+        description: "起始日 YYYYMMDD（存 API 快照時可留空）"
+        required: false
       until:
         description: "結束日 YYYYMMDD（含當天；留空＝只做起始日）"
         required: false
@@ -26,16 +37,11 @@ on:
         required: true
         default: "13580653094"
       tz:
-        description: "來源時間欄位的時區（dry-run 確認後再填）"
+        description: "來源時間欄位的時區（只在「正式萃取」用到，要先由「時區判定」確認）"
         required: true
         default: "taipei"
         type: choice
         options: ["taipei", "utc"]
-      dry_run:
-        description: "只探勘結構、不寫檔（第一次請用 true）"
-        required: true
-        default: true
-        type: boolean
 
 permissions:
   contents: write
@@ -47,24 +53,42 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: 執行萃取
+      - name: 執行
+        env:
+          MODE: ${{ inputs.mode }}
+          START: ${{ inputs.start }}
+          UNTIL: ${{ inputs.until }}
+          PARAM: ${{ inputs.param }}
+          LABEL: ${{ inputs.label }}
+          DEVICES: ${{ inputs.devices }}
+          TZ_SOURCE: ${{ inputs.tz }}
         run: |
           set -euo pipefail
-          ARGS=(--date "${{ inputs.start }}" --param "${{ inputs.param }}")
-          [ -n "${{ inputs.until }}" ] && ARGS+=(--until "${{ inputs.until }}")
-          if [ "${{ inputs.dry_run }}" = "true" ]; then
-            ARGS+=(--dry-run)
-          else
-            ARGS+=(--devices "${{ inputs.devices }}" --tz "${{ inputs.tz }}" \
-                   --label "${{ inputs.label }}" --out data)
-          fi
+          COMMON=(--param "$PARAM" --label "$LABEL" --out data)
+          case "$MODE" in
+            "存 API 快照（時區用）")
+              python3 scripts/hist_extract.py --api-snapshot --devices "$DEVICES" "${COMMON[@]}"
+              exit 0 ;;
+          esac
+          [ -n "$START" ] || { echo "::error::這個模式需要填「起始日」"; exit 1; }
+          ARGS=(--date "$START" "${COMMON[@]}")
+          if [ -n "$UNTIL" ]; then ARGS+=(--until "$UNTIL"); fi
+          case "$MODE" in
+            "探勘 ZIP 結構（dry-run）") ARGS+=(--dry-run) ;;
+            "探測有哪些測項代碼")       ARGS+=(--probe) ;;
+            "時區判定")                 ARGS+=(--tz-check --devices "$DEVICES") ;;
+            "正式萃取")                 ARGS+=(--devices "$DEVICES" --tz "$TZ_SOURCE") ;;
+            *) echo "::error::未知的模式：$MODE"; exit 1 ;;
+          esac
           python3 scripts/hist_extract.py "${ARGS[@]}"
 
       - name: 有變動才 commit
-        if: ${{ inputs.dry_run == false }}
+        if: ${{ inputs.mode == '正式萃取' || inputs.mode == '存 API 快照（時區用）' }}
         run: |
           set -euo pipefail
-          if git diff --quiet -- data; then
+          # 用 git status 而不是 git diff：data/ 第一次產生時是「未追蹤」檔案，
+          # git diff 看不到未追蹤檔案，會誤判成沒有變動而把抓到的資料丟掉。
+          if [ -z "$(git status --porcelain -- data)" ]; then
             echo "data/ 沒有變動，不提交"
             exit 0
           fi
@@ -72,4 +96,5 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add data
           git commit -m "回填 history 資料：${{ inputs.start }}~${{ inputs.until || inputs.start }} ${{ inputs.label }}"
+          git pull --rebase origin "$GITHUB_REF_NAME"
           git push
