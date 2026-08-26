@@ -40,9 +40,14 @@
 
 **微型感測器的跨日資料已經解決**：由 GitHub Actions 事先從
 <https://history.colife.org.tw> 萃取成 `data/` 裡的小 CSV，網頁同源讀取後與 API 的
-近 2 小時合併。`13580653094` 已回填 2026-08-08～21 的 PM2.5 與 Relative humidity。
-**但來源時間欄位的時區只有推論、尚未逐筆驗證**（見「未驗證」第 6 項）——
-`manifest.json` 的 `source_tz_verified` 變成 true 之前，歷史那一段有整體偏 8 小時的可能。
+近 2 小時合併，另有排程每 2 小時把 API 的滾動視窗併進 CSV，補「今天」的缺口。
+`13580653094` 已回填 2026-08-08 起的 PM2.5 與 Relative humidity。
+**來源時間欄位的時區已於 2026-08-23 逐筆驗證完成：台灣時間**（吻合 146 筆 vs 5 筆，
+見 `data/_tzcheck/CONFIRMED`），`manifest.json` 的 `source_tz_verified` 為 true。
+
+**已知的來源不穩**：2026-08-25～26 實測 `sta.colife.org.tw` 對 GitHub Actions 回
+`Connection refused`（至少 17 小時），但同期 `history.colife.org.tw` 正常。
+API 掛掉時「今天」就補不了，網頁會明說是來源無回應、不是使用者的設定問題。
 
 ---
 
