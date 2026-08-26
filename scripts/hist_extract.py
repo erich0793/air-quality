@@ -166,8 +166,10 @@ def api_fetch(device: str, labels):
                                        "$expand": "Datastreams"})
     except Exception as e:                                    # noqa: BLE001
         # 每 2 小時跑一次，偶爾連不上是正常的。講清楚就好，不要吐一整串 traceback。
-        log("!! 連不到 API（%s）：%s" % (STA, e))
-        return {}
+        # ::error:: 是 GitHub Actions 的註記語法，會顯示在執行摘要上——
+        # 否則這一步因為 continue-on-error 會整片綠色，來源掛掉好幾天也看不出來。
+        log("::error::連不到 %s（%s）。來源主機無回應，這次沒有取得任何資料。" % (STA, e))
+        return None                       # None = 連不到；{} = 連到了但沒有可用的 datastream
     vals = things.get("value") or []
     if not vals:
         log("!! API 查不到裝置 %s" % device)
@@ -215,15 +217,22 @@ def api_append(outdir: str, devices, labels):
     缺口就縮到最多 2 小時。順帶好處是資料開始自己累積，不再完全依賴 history 站
     （該服務據稱只提供到 2026-12-01）。
     """
-    total = 0
+    total, unreachable = 0, 0
     for dev in devices:
         log("裝置 %s" % dev)
         got = api_fetch(dev, labels)
+        if got is None:
+            unreachable += 1
+            continue
         for label, rows in got.items():
             total += merge_write(outdir, dev, label, rows)
     if total:
         update_manifest(outdir)
     log("完成，共寫入/更新 %d 列" % total)
+    # 「連不到來源」與「連到了但沒有新資料」是兩件事，離開碼要分得開：
+    # 前者是需要注意的異常，後者在兩次執行間隔很短時完全正常。
+    if unreachable:
+        return -1
     return total
 
 
@@ -658,7 +667,9 @@ def main():
         if not labels:
             ap.error("--api-append 找不到要抓的測項：manifest 裡沒有紀錄，請用 --labels 指定")
         log("要抓的測項：%s" % "、".join(labels))
-        sys.exit(0 if api_append(a.out, devs, labels) else 7)
+        rc = api_append(a.out, devs, labels)
+        # 7 = 來源連不到（要注意）；0 = 正常（含「連到了但沒有新資料」）
+        sys.exit(7 if rc < 0 else 0)
 
     if a.api_snapshot:
         if not a.devices.strip():
