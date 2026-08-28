@@ -136,6 +136,21 @@
   .swatch.ring{border-radius:50%;border:2px solid;background:#fff!important}
   .serieskey{display:flex;flex-wrap:wrap;gap:12px;font-family:var(--mono);font-size:11px;color:var(--ink-2);margin:0 0 10px}
 
+  /* 測站落點與溯源 */
+  .provgrid{display:grid;gap:10px;grid-template-columns:repeat(auto-fit,minmax(250px,1fr))}
+  .provcard{border:1px solid var(--rule);border-radius:3px;padding:9px 11px;background:#FBFCFC}
+  .provhead{display:flex;align-items:center;gap:6px;margin-bottom:7px;font-size:13px}
+  .provhead .dot{width:9px;height:9px;border-radius:50%;flex:none}
+  .provdl{display:grid;grid-template-columns:max-content 1fr;gap:3px 10px;margin:0;
+          font-size:11.5px;line-height:1.5}
+  .provdl dt{color:var(--ink-2);white-space:nowrap}
+  .provdl dd{margin:0;word-break:break-word}
+  .provdl code{font-size:10.5px}
+  .provdist{margin-top:11px;border-top:1px solid var(--rule);padding-top:9px}
+  .provdist-t{margin:0 0 5px;font-size:11px;letter-spacing:.06em;color:var(--ink-2)}
+  .provdist ul{margin:0;padding-left:18px;font-size:12px;line-height:1.6}
+  .provdist li{margin-bottom:5px}
+
   .raster-row{display:grid;grid-template-columns:64px 1fr;gap:8px;align-items:center;margin-bottom:2px}
   .raster-lbl{font-family:var(--mono);font-size:11px;color:var(--ink-2);text-align:right}
   .raster-cells{display:grid;grid-template-columns:repeat(24,1fr);gap:1px}
@@ -391,6 +406,20 @@
         </p>
       </section>
 
+      <!-- ---------- 測站落點與溯源 ---------- -->
+      <section class="panel">
+        <p class="panel-title">測站落點與溯源 <span class="count" id="provMeta"></span></p>
+        <div id="prov"><p class="hint" style="margin:0">尚無資料。</p></div>
+        <p class="hint">
+          這裡列的全部是<strong>來源自己回報的欄位</strong>（識別碼、分類、座標），不是本頁推論的，
+          用來確認「抓到的是不是你以為的那一台」。
+          <strong>名稱不能拿來確認身分</strong>：微型感測器的顯示名稱取自來源的
+          <code>areaDescription</code>／<code>areaType</code>，那是<strong>測站分類</strong>
+          （「一般社區」「交通」…），不是地名，不同地方的裝置可能顯示同一個名字。
+          能確認身分的是 <code>stationID</code>／<code>locationId</code> 與<strong>座標</strong>。
+        </p>
+      </section>
+
       <section class="panel">
         <p class="panel-title">小時 pattern <span class="count" id="rasterMeta">每格 = 該小時平均</span></p>
         <div id="raster"></div>
@@ -474,7 +503,7 @@ const MAX_STATIONS  = 3;
 const CONCURRENCY   = 4;      // 同時對來源站的請求數上限
 const MAX_PAGES     = 200;    // 單一序列的分頁上限，避免失控迴圈
 const PAGE_SIZE     = 100;    // 伺服器單頁上限
-const BUILD         = "2026-08-28b";   // 版本標記，診斷輸出與頁尾都會顯示，用來確認是否讀到新版
+const BUILD         = "2026-08-28c";   // 版本標記，診斷輸出與頁尾都會顯示，用來確認是否讀到新版
 
 /* 環境部開放資料的欄位 → 本頁的測項名稱。PM2.5 用同一個名稱，才能跟微型感測器疊在同一張圖。
    實測欄位：aqx_p_488 用 windspeed／datacreationdate，aqx_p_432 用 wind_speed／publishtime。 */
@@ -1891,7 +1920,8 @@ async function loadObservations(){
 /* ===================== 繪圖 ===================== */
 
 function render(){ viewCache = null; renderViewBtns();
-  renderKey(); renderCards(); renderCharts(); renderRaster(); renderTable(); renderStrat(); renderBias(); }
+  renderKey(); renderCards(); renderCharts(); renderProv(); renderRaster(); renderTable();
+  renderStrat(); renderBias(); }
 
 /* 檢視區間：只縮小「畫出來與統計的範圍」，不重新抓資料。
    0 ＝ 全部（已載入的整段）。
@@ -2290,6 +2320,109 @@ function hourlyMap(d){
 function hourInfo(hk){
   const t = tpe(hk), h = t.getUTCHours(), wd = t.getUTCDay();
   return {hour:h, weekend: wd === 0 || wd === 6, peak: (h >= 7 && h < 10) || (h >= 17 && h < 20)};
+}
+
+/* ===================== 測站落點與溯源 =====================
+
+   為什麼需要這個面板：使用者問「有沒有機制可以確認資料撈得對不對」。
+   名稱不足以確認身分——微型感測器在本頁顯示的名字取自來源的
+   areaDescription／areaType，那是**測站分類**（一般社區／交通／工業區…）而不是地名，
+   兩台相距數十公里的裝置可能顯示同一個名字。能確認身分的只有 stationID／
+   locationId 與座標，所以這裡把來源原樣回報的欄位全部攤開，不做任何推論。
+
+   順帶回答另一個問題：兩站相距多遠，決定了「小時之間該不該相關」的期望值。
+   PM2.5 的區域背景可以跨數十公里同步，但交通、餐飲、工地這類近場源的
+   小時尖峰只影響數百公尺到數公里，隔太遠本來就不會對上。 */
+function haversineKm(a, b){
+  if (![a.lat, a.lon, b.lat, b.lon].every(Number.isFinite)) return NaN;
+  const R = 6371.0088, rad = x => x * Math.PI / 180;
+  const dLat = rad(b.lat - a.lat), dLon = rad(b.lon - a.lon);
+  const h = Math.sin(dLat/2) ** 2 +
+            Math.cos(rad(a.lat)) * Math.cos(rad(b.lat)) * Math.sin(dLon/2) ** 2;
+  return 2 * R * Math.asin(Math.sqrt(h));
+}
+
+/* 距離對「可比性」代表什麼。門檻是量級上的判讀提示，不是統計檢定。 */
+function distanceNote(km){
+  if (!Number.isFinite(km)) return "來源沒有給座標，無法判斷兩站的相對位置。";
+  if (km < 0.1)  return "幾乎並置（co-location），差值才可能主要反映儀器差異。";
+  if (km < 2)    return "同一街廓尺度。近場源仍可能不同，但區域訊號應該高度同步。";
+  if (km < 10)   return "同一都會區。區域背景會同步，近場源（車流、餐飲、工地）不會。";
+  if (km < 30)   return "跨行政區。只有區域尺度的變化會同步，小時尖峰不必期待對得上。";
+  return "分屬不同地區，可能不在同一個空品區。**不宜當成同一個空氣環境比較**；"
+       + "差值不代表儀器偏差，也不代表任一方有問題。";
+}
+
+function renderProv(){
+  const box = $("prov");
+  if (!picked.length){
+    $("provMeta").textContent = "";
+    box.innerHTML = '<p class="hint" style="margin:0">尚無資料。</p>';
+    return;
+  }
+  $("provMeta").textContent = picked.length + " 站";
+
+  // 每一站在 dataset 裡的筆數：載入了但沒有資料的站要看得出來，不能靜默消失
+  const rowsFor = st => dataset.filter(d => d.station.uid === st.uid);
+  const esc = s => String(s == null ? "" : s)
+    .replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
+
+  const cards = picked.map(st => {
+    const src = SOURCES[st.src] || {label: st.src, badge: st.src};
+    const mine = rowsFor(st);
+    const nPts = mine.reduce((a,d) => a + d.points.length, 0);
+    const nHist = mine.reduce((a,d) => a + (d.histCount || 0), 0);
+    const nApi  = mine.reduce((a,d) => a + (d.apiCount  || 0), 0);
+    const hasXY = Number.isFinite(st.lat) && Number.isFinite(st.lon);
+    const xy = hasXY ? `${st.lat.toFixed(6)}, ${st.lon.toFixed(6)}` : "來源未提供";
+    const map = hasXY
+      ? ` · <a href="https://www.openstreetmap.org/?mlat=${st.lat}&mlon=${st.lon}#map=16/${st.lat}/${st.lon}"
+             target="_blank" rel="noopener">開地圖確認</a>`
+      : "";
+    const ids = [
+      st.stationID  ? `stationID <code>${esc(st.stationID)}</code>` : "",
+      st.locationId ? `locationId <code>${esc(st.locationId)}</code>` : "",
+      st.id != null ? `@iot.id <code>${esc(st.id)}</code>` : ""
+    ].filter(Boolean).join(" · ");
+    const seg = nHist || nApi
+      ? `歷史檔 ${nHist.toLocaleString()} 筆 ＋ API ${nApi.toLocaleString()} 筆`
+      : `${nPts.toLocaleString()} 筆`;
+    return `
+      <div class="provcard">
+        <div class="provhead">
+          <span class="dot" style="background:${colorOf(st)}"></span>
+          <strong>${esc(stationLabel(st))}</strong>
+          <span class="badge">${esc(src.badge)}</span>
+        </div>
+        <dl class="provdl">
+          <dt>來源</dt><dd>${esc(src.label)}</dd>
+          <dt>官方名稱</dt><dd>${esc(st.name)}</dd>
+          <dt>識別碼</dt><dd>${ids || "—"}</dd>
+          <dt>分類</dt><dd>${esc([st.area || st.props?.stationType, st.authority]
+            .filter(Boolean).join(" · ") || "—")}</dd>
+          <dt>行政區</dt><dd>${esc([st.city, st.township].filter(Boolean).join(" ") || "—")}</dd>
+          <dt>座標</dt><dd>${esc(xy)}${map}</dd>
+          <dt>本次載入</dt><dd>${nPts ? seg : '<strong>沒有取到任何觀測值</strong>'}</dd>
+        </dl>
+      </div>`;
+  }).join("");
+
+  // 兩兩距離：這是回答「為什麼小時之間對不上」最直接的一個數字
+  let dist = "";
+  if (picked.length > 1){
+    const items = [];
+    for (let i = 0; i < picked.length; i++)
+      for (let j = i + 1; j < picked.length; j++){
+        const a = picked[i], b = picked[j], km = haversineKm(a, b);
+        items.push(`<li><strong>${esc(stationLabel(a))} ↔ ${esc(stationLabel(b))}</strong>：`
+          + (Number.isFinite(km)
+              ? `直線 <strong>${km < 10 ? km.toFixed(2) : km.toFixed(1)} km</strong>`
+              : "距離未知")
+          + `<br><span class="hint" style="margin:0">${esc(distanceNote(km)).replace(/\*\*(.+?)\*\*/g,"<strong>$1</strong>")}</span></li>`);
+      }
+    dist = `<div class="provdist"><p class="provdist-t">兩站直線距離</p><ul>${items.join("")}</ul></div>`;
+  }
+  box.innerHTML = `<div class="provgrid">${cards}</div>${dist}`;
 }
 
 function renderStrat(){

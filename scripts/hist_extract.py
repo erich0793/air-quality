@@ -209,6 +209,48 @@ def api_fetch(device: str, labels):
     return out
 
 
+def cross_check(outdir: str, device: str, param: str, rows: dict, tol: float = 1e-6) -> int:
+    """把 API 這次拿到的值，與 CSV 裡同一分鐘的既有值逐筆比對。
+
+    為什麼值得做：history 站的日檔與 STA API 是**兩條互相獨立的路徑**取得同一台
+    裝置的同一筆量測。同一分鐘兩邊的數字必須一致；不一致就代表其中一條路
+    抓錯了東西——最典型的就是從 1,374 萬列的日檔裡篩錯裝置，或裝置編號對到
+    別台。這是本專案唯一不必再向來源多要一次資料就能做的正確性檢查。
+
+    只比對「兩邊都有」的分鐘，回傳不一致的筆數。單純缺一邊不算不一致。
+    """
+    existing = {}
+    for month in sorted({iso[:7] for iso in rows}):
+        path = os.path.join(outdir, "iot", device, month + ".csv")
+        if not os.path.exists(path):
+            continue
+        with open(path, newline="", encoding="utf-8") as f:
+            rd = csv.reader(f)
+            head = next(rd, ["time_utc"])
+            if param not in head:
+                continue
+            col = head.index(param)
+            for r in rd:
+                if r and col < len(r) and r[col].strip():
+                    existing[r[0][:16]] = r[col].strip()
+    checked = bad = 0
+    for iso, val in rows.items():
+        old = existing.get(iso[:16])
+        if old is None:
+            continue
+        checked += 1
+        try:
+            if abs(float(old) - float(val)) > tol:
+                bad += 1
+                if bad <= 5:                       # 只印前幾筆，避免洗版
+                    log("  !! %s 的「%s」不一致：CSV %s vs API %g" % (iso, param, old, val))
+        except ValueError:
+            bad += 1
+    if checked:
+        log("  交叉比對「%s」：重疊 %d 個時標，不一致 %d 筆" % (param, checked, bad))
+    return bad
+
+
 def api_append(outdir: str, devices, labels):
     """把 API 那 2 小時併進 data/iot/<裝置>/<YYYY-MM>.csv。
 
@@ -217,7 +259,7 @@ def api_append(outdir: str, devices, labels):
     缺口就縮到最多 2 小時。順帶好處是資料開始自己累積，不再完全依賴 history 站
     （該服務據稱只提供到 2026-12-01）。
     """
-    total, unreachable = 0, 0
+    total, unreachable, mismatch = 0, 0, 0
     for dev in devices:
         log("裝置 %s" % dev)
         got = api_fetch(dev, labels)
@@ -225,10 +267,15 @@ def api_append(outdir: str, devices, labels):
             unreachable += 1
             continue
         for label, rows in got.items():
+            mismatch += cross_check(outdir, dev, label, rows)
             total += merge_write(outdir, dev, label, rows)
     if total:
         update_manifest(outdir)
     log("完成，共寫入/更新 %d 列" % total)
+    if mismatch:
+        # 不中止：一兩筆不合可能是站方事後修正過的值。但要留下痕跡，
+        # 因為「同一分鐘兩條路拿到不同數字」正是「撈錯裝置」會有的徵狀。
+        log("::warning::有 %d 個時標的 API 值與既有 CSV 不一致，見上方逐筆列出" % mismatch)
     # 「連不到來源」與「連到了但沒有新資料」是兩件事，離開碼要分得開：
     # 前者是需要注意的異常，後者在兩次執行間隔很短時完全正常。
     if unreachable:
