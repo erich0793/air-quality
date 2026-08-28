@@ -462,7 +462,7 @@ const MAX_STATIONS  = 3;
 const CONCURRENCY   = 4;      // 同時對來源站的請求數上限
 const MAX_PAGES     = 200;    // 單一序列的分頁上限，避免失控迴圈
 const PAGE_SIZE     = 100;    // 伺服器單頁上限
-const BUILD         = "2026-08-26a";   // 版本標記，診斷輸出與頁尾都會顯示，用來確認是否讀到新版
+const BUILD         = "2026-08-28a";   // 版本標記，診斷輸出與頁尾都會顯示，用來確認是否讀到新版
 
 /* 環境部開放資料的欄位 → 本頁的測項名稱。PM2.5 用同一個名稱，才能跟微型感測器疊在同一張圖。
    實測欄位：aqx_p_488 用 windspeed／datacreationdate，aqx_p_432 用 wind_speed／publishtime。 */
@@ -1625,22 +1625,32 @@ function rangeText(r){
    （無 CORS、無金鑰、手機可用），再與 API 的近 2 小時併成一條序列。
    兩段的來源與筆數必須分開標示，不得混為一談。 */
 
-let histManifest;                    // undefined＝還沒查；null＝沒有；物件＝有
-const histCache = new Map();         // "<裝置>/<YYYY-MM>" → 解析後的表，或 null
+let histManifest;                    // undefined＝還沒查；null＝確定沒有；物件＝有
+const histCache = new Map();         // "<裝置>/<YYYY-MM>" → 解析後的表，或 null（確定沒有）
+/* 這一輪載入有沒有發生「抓歷史檔失敗」。失敗與「本來就沒有歷史檔」必須分開：
+   前者的結果不完整、不該被當成事實存進快取，也必須讓使用者看到。 */
+let histFetchFailed = false;
 
 // 以本頁所在目錄為基準，GitHub Pages 放在子路徑底下也能對
 const histBase = () => location.href.replace(/[?#].*$/, "").replace(/[^/]*$/, "") + "data/";
 
+/* 只有「成功」與「確定沒有（404）」才記進快取。
+   **網路錯誤不可以記**：手機上只要有一次連線打嗝，之前的寫法會把 histManifest 釘成 null，
+   於是同一個分頁裡之後每一次載入都當作「這台裝置沒有歷史檔」——而且完全沒有跡象，
+   還會把那份「少了一站」的結果存進資料快取，下次開啟又照著畫出來。 */
 async function loadHistManifest(){
   if (histManifest !== undefined) return histManifest;
-  histManifest = null;
   try {
     const r = await fetch(histBase() + "manifest.json", {cache:"no-cache"});
-    if (r.ok) histManifest = await r.json();
+    if (r.ok){ histManifest = await r.json(); return histManifest; }
+    if (r.status === 404){ histManifest = null; return null; }   // 還沒有任何資料，這是確定的
+    histFetchFailed = true;                                      // 5xx 之類：這次不算數，下次重試
+    return null;
   } catch (e){
-    // 還沒有任何資料，或以 file:// 開啟時讀不到相對路徑——兩種都不是錯誤，靜默略過
+    // 連線失敗，或以 file:// 開啟時讀不到相對路徑。不寫進 histManifest，保留下次重試的機會。
+    histFetchFailed = true;
+    return null;
   }
-  return histManifest;
 }
 
 function parseHistCsv(text){
@@ -1659,13 +1669,20 @@ function parseHistCsv(text){
 async function histMonth(device, month){
   const key = device + "/" + month;
   if (histCache.has(key)) return histCache.get(key);
-  let out = null;
   try {
     const r = await fetch(`${histBase()}iot/${encodeURIComponent(device)}/${month}.csv`, {cache:"no-cache"});
-    if (r.ok) out = parseHistCsv(await r.text());
-  } catch (e){ out = null; }
-  histCache.set(key, out);
-  return out;
+    if (r.ok){
+      const out = parseHistCsv(await r.text());
+      histCache.set(key, out);              // 成功才記
+      return out;
+    }
+    if (r.status === 404){ histCache.set(key, null); return null; }   // 這個月確實沒有檔
+    histFetchFailed = true;
+    return null;                            // 其他 HTTP 錯誤：不記，下次重試
+  } catch (e){
+    histFetchFailed = true;                 // 連線失敗同上
+    return null;
+  }
 }
 
 /* 回傳該裝置該測項在區間內的歷史點；沒有 repo 資料時回 null（與「有檔但 0 筆」不同）。 */
@@ -1718,6 +1735,7 @@ async function loadObservations(){
 
   $("loadBtn").disabled = true; $("csvBtn").disabled = true;
   dataset = [];
+  histFetchFailed = false;                   // 這一輪重新判斷
   const warns = pendingNotes.splice(0);      // 併入回復測站時累積的提醒
 
   try {
@@ -1834,13 +1852,27 @@ async function loadObservations(){
   const head = n
     ? `已載入 ${n} 筆觀測值：${dataset.length} 條序列 / ${new Set(dataset.map(d => d.station.uid)).size} 站 × ${days} 天${split}。`
     : "沒有取回任何觀測值。";
-  setStatus(head + (warns.length ? "" : ""), n ? (warns.length ? "warn" : "") : "warn",
+  // 有測站完全沒有可畫的資料時要點名。否則標題寫「2 站」而圖上只有 1 站，
+  // 使用者看到的是一個對不起來、又沒有任何解釋的畫面。
+  const withData = new Set(dataset.filter(d => d.points.length).map(d => d.station.uid));
+  const empty = picked.filter(s => !withData.has(s.uid));
+  if (empty.length && dataset.length)
+    warns.push(`這 ${empty.length} 站在所選區間內沒有任何可畫的資料，所以不會出現在圖上：` +
+               empty.map(stationLabel).join("、") + "。");
+  if (histFetchFailed)
+    warns.push("有部分 repo 歷史檔沒抓成功（網路或來源暫時有問題），" +
+               "所以微型感測器的跨日資料可能不完整。再按一次「載入測站資料」通常就會補齊。");
+
+  setStatus(head, n ? (warns.length ? "warn" : "") : "warn",
             warns.length ? "<ul>" + warns.map(w => "<li>" + escHtml(w) + "</li>").join("") + "</ul>" : "");
   render();
   $("loadBtn").disabled = false;
   $("csvBtn").disabled = !n;
   syncHash();
-  saveCache(days, $("endDate").value);
+  // 抓取失敗時這一份結果是殘缺的，不可以存成快取——否則下次打開會把殘缺的畫面
+  // 當成正常結果重現，使用者只會看到「少了一站」而不知道為什麼。
+  if (histFetchFailed) { try { localStorage.removeItem(CACHE_STORE); } catch (e){} }
+  else saveCache(days, $("endDate").value);
   if (firstLoad){ collapseAdd(); firstLoad = false; }
 }
 
@@ -2584,13 +2616,35 @@ async function loadFromHash(){
   render();
   collapseAdd();
   $("csvBtn").disabled = false;
+  // 記住的 hash 會把「結束日」一起釘住，於是每次打開都停在同一個舊視窗——
+  // 使用者以為自己在看最近的空氣品質，其實看的是好幾天前的。這件事要講出來。
+  const todayTw = new Date(Date.now() + 8*3600e3).toISOString().slice(0,10);
+  const staleDays = Math.round((Date.parse(todayTw) - Date.parse($("endDate").value)) / 864e5);
+  const staleNote = staleDays >= 1
+    ? `<br><strong>注意：結束日停在 ${$("endDate").value}，距今 ${staleDays} 天</strong>` +
+      `（記住的檢視會連日期一起記住）。<button type="button" id="jumpToday" class="ghost" ` +
+      `style="padding:2px 8px;font-size:11px;margin-left:4px">改看到今天</button>`
+    : "";
   // 沒能全部回復測站的提醒（pendingNotes）在這條路徑上不會經過 loadObservations()，
   // 要自己接上去，不然使用者永遠看不到
   const notes = pendingNotes.splice(0);
+  // 快取裡可能有「當時就沒有資料」的測站，畫不出來。講明是哪幾站，
+  // 不要讓「N 站」與圖上看到的站數對不起來。
+  const withData = new Set(dataset.filter(d => d.points.length).map(d => d.station.uid));
+  const empty = picked.filter(x => !withData.has(x.uid));
+  if (empty.length)
+    notes.push(`這 ${empty.length} 站在這份快取裡沒有資料，所以不在圖上：` +
+               empty.map(stationLabel).join("、") + "。按「載入測站資料」重抓通常就會回來。");
   setStatus(`顯示的是 <strong>${agoText(cache.saved)}</strong>（${
-    fmtStamp(cache.saved)}）抓取的資料，<strong>不是即時值</strong>。`, "warn",
+    fmtStamp(cache.saved)}）抓取的資料，<strong>不是即時值</strong>。` + staleNote, "warn",
     `<ul><li>${n} 筆 · ${dataset.length} 條序列 · ${picked.length} 站。要更新請按「載入測站資料」。</li>` +
     notes.map(w => "<li>" + escHtml(w) + "</li>").join("") + "</ul>");
+  const jt = $("jumpToday");
+  if (jt) jt.addEventListener("click", () => {
+    $("endDate").value = todayTw;
+    syncHash();
+    loadObservations();        // 直接重抓，不要讓使用者再多按一次
+  });
 }
 
 /* ===================== 來源切換 ===================== */
