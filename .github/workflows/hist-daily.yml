@@ -29,19 +29,32 @@ jobs:
           python3 scripts/hist_extract.py --api-snapshot --devices "$DEVICES" \
             --label "Relative humidity" --out data
 
-      - name: 抓前兩天（各測項）
+      - name: 抓最近四天（各測項，已完整的日子會自動跳過）
         run: |
           set -euo pipefail
           # runner 是 UTC，這裡要的是「台灣時間」的日期，所以先 +8 小時再算。
-          # 抓兩天而不是一天：站方約在台灣時間 03:00 才放上前一日的檔案，
-          # 萬一延遲就會整天漏掉；寫入本來就以時間去重，重複抓不會有副作用。
-          FROM=$(date -u -d "+8 hours -2 days" +%Y%m%d)
+          #
+          # 為什麼是四天而不是一天：
+          #   (a) 站方約在台灣時間 03:00 才放上前一日的檔案，延遲就會整天漏掉；
+          #   (b) **GitHub 的 schedule 不保證會觸發**。2026-08-27 21:00Z 這一次
+          #       整個沒有產生執行紀錄，08-27 的日檔因此從來沒被抓過，那一天在
+          #       CSV 裡只剩 api-append 補的 314 列（正常是 1440 列）。
+          #       視窗只有兩天時，連漏一次就永久少一天。
+          # 拉寬視窗不等於多下載：--skip-complete 會先看 CSV，該台灣日的該測項
+          # 已經有足夠列數就直接跳過，不下載。穩定狀態下每天其實只下載
+          # 「昨天」一個檔，比原本固定抓兩天還少。
+          #
+          # 門檻取 1200：一天滿載是 1440 列（每分鐘一筆）。實測 08-08～08-26 的
+          # 完整日落在 1333～1440（感測器自己會掉幾分鐘），而來源本身就殘缺的日子
+          # 是 1092（08-11）、780（08-13）、0（08-12）。1200 剛好把兩群分開——
+          # 完整日跳過，殘缺日仍會再試一次（站方可能事後補齊）。
+          FROM=$(date -u -d "+8 hours -4 days" +%Y%m%d)
           TO=$(date -u -d "+8 hours -1 day" +%Y%m%d)
           echo "處理台灣時間 $FROM ～ $TO"
           # param=檔名代碼；label=網頁上的測項名稱，兩者必須對得起來
           run_one () {
             python3 scripts/hist_extract.py --date "$FROM" --until "$TO" \
-              --param "$1" --label "$2" --skip-missing \
+              --param "$1" --label "$2" --skip-missing --skip-complete 1200 \
               --devices "$DEVICES" --tz "$TZ_SOURCE" --out data
           }
           # 2026-08-22 以 --probe 實測：只有 humidity、pm25、temperature 三個代碼存在

@@ -533,6 +533,36 @@ def extract(zpath: str, devices, tz: str, param_label: str, param_code: str,
     return out
 
 
+def day_rows(outdir: str, device: str, param: str, date: str) -> int:
+    """某台裝置在某個「台灣日期」的某測項，CSV 裡已經有幾列非空值。
+
+    給 --skip-complete 用：history 的日檔一天約 1440 列，已經填滿的那一天沒必要
+    再拉一次 220 MB 回來重算。這讓每日排程可以把視窗拉寬（漏跑一次也補得回來）
+    而不會等比例增加對來源站的負載——已經完整的日子直接跳過，不下載。
+
+    台灣日 YYYYMMDD ＝ UTC 的 [前一日 16:00, 當日 16:00)，會跨月，兩個月檔都要看。
+    時標是固定寬度的 ISO UTC，字串比較就等於時間比較。
+    """
+    d = datetime.strptime(date, "%Y%m%d")
+    lo = (d - timedelta(hours=8)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    hi = (d + timedelta(days=1) - timedelta(hours=8)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    n = 0
+    for month in sorted({lo[:7], hi[:7]}):
+        path = os.path.join(outdir, "iot", device, month + ".csv")
+        if not os.path.exists(path):
+            continue
+        with open(path, newline="", encoding="utf-8") as f:
+            rd = csv.reader(f)
+            head = next(rd, ["time_utc"])
+            if param not in head:
+                continue
+            col = head.index(param)
+            for r in rd:
+                if r and lo <= r[0] < hi and col < len(r) and r[col].strip():
+                    n += 1
+    return n
+
+
 def merge_write(outdir: str, device: str, param: str, data: dict):
     """把該測項併進 data/iot/<device>/<YYYY-MM>.csv（寬表）。
 
@@ -631,6 +661,8 @@ def main():
     ap.add_argument("--tz", choices=["taipei", "utc"], help="來源時間欄位的時區；正式萃取時必填")
     ap.add_argument("--out", default="data")
     ap.add_argument("--dry-run", action="store_true")
+    ap.add_argument("--skip-complete", type=int, default=0, metavar="N",
+                    help="該台灣日期的該測項在 CSV 裡已有 N 列以上就不下載（0＝關閉）")
     ap.add_argument("--skip-missing", action="store_true",
                     help="某一天的檔案還沒產出時跳過該天（整批都沒抓到仍會失敗）")
     ap.add_argument("--tz-check", action="store_true",
@@ -739,7 +771,18 @@ def main():
 
     label = a.label or a.param
     total_rows = 0
+    skipped_complete = 0
     for date in dates:
+        # 已經填滿的日子不必再下載一次（見 day_rows()）。只在真的要從站方下載時才判斷：
+        # --from-file／--url 是除錯用的明確指定，dry-run 與 tz-check 本來就不寫檔。
+        if (a.skip_complete and date and not (a.dry_run or a.tz_check
+                                              or a.from_file or a.url)):
+            have = min(day_rows(a.out, dev, label, date) for dev in devices)
+            if have >= a.skip_complete:
+                log("%s 的「%s」已有 %d 列（門檻 %d），不重複下載"
+                    % (date, label, have, a.skip_complete))
+                skipped_complete += 1
+                continue
         with tempfile.TemporaryDirectory() as tmp:
             if a.from_file:
                 zpath, url = a.from_file, "(本機檔案) " + a.from_file
@@ -780,8 +823,10 @@ def main():
 
     if not (a.dry_run or a.tz_check):
         update_manifest(a.out, a.tz)
-        log("完成，共寫入 %d 列" % total_rows)
-        if total_rows == 0:
+        log("完成，共寫入 %d 列（另有 %d 天已完整而跳過）" % (total_rows, skipped_complete))
+        if total_rows == 0 and skipped_complete == 0:
+            # 每一天都被 --skip-complete 跳過時，0 列是正確結果而不是故障，
+            # 這種情況不能報錯，否則每日排程在資料齊全時反而變紅。
             log("!! 一列都沒有寫入——請確認裝置編號與欄位對應是否正確")
             sys.exit(4)
 

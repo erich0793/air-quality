@@ -28,7 +28,7 @@
 | `scripts/hist_extract.py` | 從 history.colife.org.tw 萃取指定裝置的歷史觀測值（只用 Python 標準函式庫） |
 | `.github/workflows/hist-backfill.yml` | 手動回填／探測（五種模式） |
 | `.github/workflows/hist-daily.yml` | 每日增量抓取（台灣時間 05:00） |
-| `.github/workflows/api-append.yml` | 每 2 小時把 API 即時值併進歷史檔（補「今天」的缺口） |
+| `.github/workflows/api-append.yml` | 每小時把 API 即時值併進歷史檔（補「今天」的缺口） |
 | `data/` | 上面兩個 workflow 的產出，網頁以同源方式讀取 |
 | `worker.js` | Cloudflare Worker CORS proxy，**只有被 CORS 擋下時才需要** |
 | `README.md` | 本說明 |
@@ -245,8 +245,19 @@ index.html   與 API 的近 2 小時合併成單一序列
 > 兩者中間最多差約 22 小時，所以在傍晚或半夜看，「今天」幾乎整天沒有資料。
 > 這不是抓取失敗，也不是感測器離線。
 >
-> `api-append.yml` 每 2 小時把 API 的滾動視窗併進 CSV，把缺口縮到最多 2 小時。
+> `api-append.yml` 每小時把 API 的滾動視窗併進 CSV，把缺口縮到最多 2 小時。
 > **間隔不能拉長超過 2 小時**，否則會漏掉 API 已經淘汰的觀測值。
+>
+> **但排程本身不保證會跑。** GitHub 的 `schedule` 是盡力而為：2026-08-28 查證，
+> `hist-daily` 在 08-27T21:00Z 那一次完全沒有觸發，`api-append` 一天該跑 12 次
+> 卻只跑了 3 次。所以還有第二層保險——`hist-daily` 每次回看**最近四天**，
+> 漏跑幾次隔天也補得回來。回看變寬不會變成多下載：已經填滿的日子
+> （該日該測項 ≥ 1200 列）直接跳過，不會再拉一次 220 MB 的日檔。
+>
+> 圖上出現破碎的空白時，先看是哪一種原因：**來源掛掉**（Actions 執行紀錄裡有
+> `::error::`）、**排程沒觸發**（Actions 裡根本沒有那個時段的紀錄）、
+> **來源日檔本身殘缺**（例如 08-12 站方就沒有），或**感測器離線**。四者不同，
+> 不要混為一談。
 
 ### 自己回填
 
