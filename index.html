@@ -283,21 +283,36 @@
           <div class="btn-row"><button id="histBtn" class="ghost">探測這個網址</button></div>
         </details>
 
-        <details>
-          <summary>改用座標找附近的微型感測器</summary>
+        <details id="nearBox">
+          <summary>用我的位置或座標找附近的測站</summary>
+          <div class="btn-row" style="margin-top:10px">
+            <button id="geoBtn" class="ghost">用我的位置</button>
+            <button id="findBtn" class="ghost">搜尋</button>
+          </div>
+          <p class="hint" id="geoNote" style="margin:6px 0 0">
+            定位需要你在瀏覽器上授權，而且只有 https 網頁能用。
+            取得的座標<strong>只放在下面兩個欄位裡</strong>——不會存到這台裝置、
+            不會寫進分享連結、也不會送到任何第三方；搜尋請求只帶座標去問政府的資料來源。
+          </p>
           <label class="field" style="margin-top:10px">
             <span>中心座標（緯度, 經度）</span>
             <div class="row2">
-              <input type="number" id="lat" step="0.0001" value="24.9985">
-              <input type="number" id="lon" step="0.0001" value="121.4519">
+              <input type="number" id="lat" step="0.000001" value="24.9985">
+              <input type="number" id="lon" step="0.000001" value="121.4519">
             </div>
           </label>
           <label class="field">
-            <span>搜尋半徑（公尺）</span>
+            <span>搜尋半徑（公尺）— 只作用在微型感測器</span>
             <input type="number" id="radius" value="1500" min="200" step="100">
           </label>
-          <div class="btn-row"><button id="findBtn" class="ghost">搜尋鄰近測站</button></div>
           <ul class="stations" id="nearList" style="margin-top:10px"></ul>
+          <p class="hint" style="margin:8px 0 0">
+            兩種來源的密度差很多，所以查法不同：<strong>微型感測器</strong>全國約 10,999 點，
+            用半徑做空間查詢；<strong>國家空品測站</strong>全國只有 77 站，站與站之間動輒數十公里，
+            用半徑幾乎一定是空的，所以改成<strong>不論半徑都列出最近的幾站</strong>。
+            兩者都會標出直線距離——距離決定了兩站的小時變化該不該相關，加站前先看一眼。
+            （國家測站那份清單需要環境部開放資料的 api_key。）
+          </p>
         </details>
 
         <details>
@@ -512,7 +527,7 @@ const MAX_STATIONS  = 3;
 const CONCURRENCY   = 4;      // 同時對來源站的請求數上限
 const MAX_PAGES     = 200;    // 單一序列的分頁上限，避免失控迴圈
 const PAGE_SIZE     = 100;    // 伺服器單頁上限
-const BUILD         = "2026-08-30a";   // 版本標記，診斷輸出與頁尾都會顯示，用來確認是否讀到新版
+const BUILD         = "2026-08-30b";   // 版本標記，診斷輸出與頁尾都會顯示，用來確認是否讀到新版
 
 /* 環境部開放資料的欄位 → 本頁的測項名稱。PM2.5 用同一個名稱，才能跟微型感測器疊在同一張圖。
    實測欄位：aqx_p_488 用 windspeed／datacreationdate，aqx_p_432 用 wind_speed／publishtime。 */
@@ -536,10 +551,14 @@ const SOURCES = {
     cadence:3, endpointEl:"endpoint", demo:"13580653094",
     inputLabel:"裝置編號（不是裝置名稱）",
     placeholder:"13580653094",
+    // 這裡不放 TW 開頭的具體範例：舊版寫的 TW040203A0506884 是**沒有驗證過的例子**，
+    // 使用者照著貼會得到「查無」。locationId 這個欄位本身是真的（程式第一個就用它查），
+    // 但要拿到真的值，請用下面的「找附近的測站」——搜出來的每一站都會顯示它自己的 locationId。
     hint:'空氣網（<a href="https://wot.moenv.gov.tw" target="_blank" rel="noopener">wot.moenv.gov.tw</a>）點開感測點後，'
-       + '面板中間那串粗體<strong>編號</strong>，例如 <code>13580653094</code>（純數字的 stationID）或 '
-       + '<code>TW040203A0506884</code>（locationId）。<strong>這是裝置編號，不是裝置名稱</strong>，'
-       + '輸入「中山國小」之類的地點名稱查不到。'
+       + '面板中間那串粗體<strong>編號</strong>，例如 <code>13580653094</code>（純數字的 stationID，'
+       + '這一台已實測可用）。TW 開頭的 <code>locationId</code> 也查得到，但請用實際存在的值——'
+       + '展開下方「用我的位置或座標找附近的測站」搜一次，結果就會列出各站真正的編號。'
+       + '<strong>這是裝置編號，不是裝置名稱</strong>，輸入「中山國小」之類的地點名稱查不到。'
   },
   moenv: {
     key:"moenv", label:"國家空品測站（環境部開放資料）", badge:"環境部",
@@ -1454,8 +1473,6 @@ async function findNearby(){
     $("findBtn").disabled = false;
     return;
   }
-  $("findBtn").disabled = false;
-
   const seen = new Set();
   const near = list.filter(s => !seen.has(s.uid) && seen.add(s.uid))
                    .map(s => ({...s, dist: haversine(la, lo, s.lat, s.lon)}))
@@ -1463,24 +1480,99 @@ async function findNearby(){
                    .sort((a,b) => a.dist - b.dist)
                    .slice(0, 25);
 
-  const ul = $("nearList");
-  if (!near.length){
-    ul.innerHTML = '<li style="border:none"><p class="hint" style="margin:0">半徑內沒有回傳感測器，把半徑放大到 3000 m 試試。</p></li>';
-    setStatus("這個半徑內沒有感測器。", "warn");
-    return;
+  /* 國家測站全國只有 77 站，站與站之間動輒數十公里，套同一個半徑幾乎一定是空的。
+     那份清單本來就整份抓回來快取著，所以改成本機算距離、**不論半徑**列出最近幾站。
+     這正是這個專案最需要的一步：先看清楚最近的參考測站有多遠，再決定要不要拿來比。 */
+  let nat = [];
+  let natErr = "";
+  try {
+    const all = await fetchMoenvStations();
+    nat = all.filter(s => Number.isFinite(s.lat) && Number.isFinite(s.lon))
+             .map(s => ({...s, dist: haversine(la, lo, s.lat, s.lon)}))
+             .sort((a,b) => a.dist - b.dist)
+             .slice(0, 4);
+  } catch (e){
+    // 沒有 api_key 或來源沒回應時，微型那半邊仍然要能用，不要整個搜尋失敗
+    natErr = isNetworkFailure(e) ? "國家測站清單抓不到（來源無回應）。"
+                                 : "國家測站清單抓不到（多半是還沒填 api_key）。";
   }
-  ul.innerHTML = near.map(s => `
-    <li><div class="st">
+  $("findBtn").disabled = false;
+
+  const ul = $("nearList");
+  const row = (s, src) => {
+    const q = src === "moenv" ? stationLabel(s) : (s.locationId || s.stationID);
+    const d = s.dist < 1000 ? `${Math.round(s.dist)} m` : `${(s.dist/1000).toFixed(1)} km`;
+    return `<li><div class="st">
       <span style="width:0"></span>
       <span>
-        <span class="st-name">${escHtml(stationLabel(s))}</span><br>
-        <span class="st-meta">${escHtml(s.locationId || s.stationID)} · ${Math.round(s.dist)} m</span>
+        <span class="st-name">${escHtml(stationLabel(s))}<span class="badge ${src}">${
+          SOURCES[src].badge}</span></span><br>
+        <span class="st-meta">${escHtml([s.stationID, s.locationId].filter(Boolean).join(" · ")
+          || s.id || "")} · 直線 ${d}</span>
       </span>
-      <button class="ghost" data-q="${escHtml(s.locationId || s.stationID)}" style="padding:3px 8px;font-size:11px">加入</button>
-    </div></li>`).join("");
+      <button class="ghost" data-q="${escHtml(q)}" data-src="${src}"
+              style="padding:3px 8px;font-size:11px">加入</button>
+    </div></li>`;
+  };
+
+  let html = "";
+  html += `<li style="border:none"><p class="hint" style="margin:0 0 4px">
+    <strong>微型感測器</strong>（半徑 ${rad} m 內）</p></li>`;
+  html += near.length ? near.map(s => row(s, "iot")).join("")
+    : `<li style="border:none"><p class="hint" style="margin:0">半徑內沒有回傳感測器，把半徑放大到 3000 m 試試。</p></li>`;
+  html += `<li style="border:none"><p class="hint" style="margin:10px 0 4px">
+    <strong>最近的國家空品測站</strong>（不受半徑限制）</p></li>`;
+  html += nat.length ? nat.map(s => row(s, "moenv")).join("")
+    : `<li style="border:none"><p class="hint" style="margin:0">${escHtml(natErr || "沒有取到國家測站清單。")}</p></li>`;
+  ul.innerHTML = html;
+
   ul.querySelectorAll("button").forEach(b =>
-    b.addEventListener("click", () => addDevice(b.dataset.q, "iot")));
-  setStatus(`找到 ${near.length} 個感測器，最近的距離中心點 ${Math.round(near[0].dist)} m。`);
+    b.addEventListener("click", () => addDevice(b.dataset.q, b.dataset.src)));
+
+  const bits = [];
+  bits.push(near.length ? `半徑內有 ${near.length} 個微型感測器（最近 ${Math.round(near[0].dist)} m）`
+                        : "半徑內沒有微型感測器");
+  if (nat.length) bits.push(`最近的國家測站是「${stationLabel(nat[0])}」，${(nat[0].dist/1000).toFixed(1)} km`);
+  setStatus(bits.join("；") + "。", near.length || nat.length ? "" : "warn", natErr);
+}
+
+/* 用瀏覽器定位填座標。座標只寫進畫面上的兩個輸入框：不進 localStorage、不進 hash
+   （hash 是拿來分享的，把住家座標放進去等於外洩），也不會送去政府來源以外的地方。 */
+function geolocate(){
+  const note = $("geoNote");
+  if (!navigator.geolocation){
+    setStatus("這個瀏覽器沒有定位功能，請直接輸入座標。", "warn");
+    return;
+  }
+  $("geoBtn").disabled = true;
+  setStatus("正在定位…請在瀏覽器的提示上按「允許」。", "busy");
+  navigator.geolocation.getCurrentPosition(
+    pos => {
+      $("geoBtn").disabled = false;
+      const {latitude, longitude, accuracy} = pos.coords;
+      $("lat").value = latitude.toFixed(6);
+      $("lon").value = longitude.toFixed(6);
+      // 誤差要講出來：手機用基地台定位可能差好幾公里，那時「最近的測站」就沒有意義
+      const acc = Math.round(accuracy);
+      note.innerHTML = `已取得座標，<strong>定位誤差約 ±${acc} m</strong>（瀏覽器回報）。`
+        + (acc > 500
+            ? '誤差這麼大多半是用 Wi-Fi／基地台定位，<strong>「最近的測站」可能不準</strong>，'
+              + '建議到室外或改用手動輸入座標。'
+            : "");
+      findNearby();
+    },
+    err => {
+      $("geoBtn").disabled = false;
+      // 三種失敗要給不同的修法，不能全部寫「定位失敗」
+      const how = err.code === err.PERMISSION_DENIED
+          ? "你（或瀏覽器設定）拒絕了定位權限。可以在網址列的鎖頭圖示裡改回允許，或直接手動輸入座標。"
+        : err.code === err.POSITION_UNAVAILABLE
+          ? "裝置目前拿不到位置（室內或關掉定位服務時常見）。請手動輸入座標。"
+        : "定位逾時。請再按一次，或手動輸入座標。";
+      setStatus("定位失敗：" + how, "bad");
+    },
+    {enableHighAccuracy: true, timeout: 12000, maximumAge: 60000}
+  );
 }
 
 /* ===================== 已加入清單 ===================== */
@@ -2387,13 +2479,11 @@ function hourInfo(hk){
    順帶回答另一個問題：兩站相距多遠，決定了「小時之間該不該相關」的期望值。
    PM2.5 的區域背景可以跨數十公里同步，但交通、餐飲、工地這類近場源的
    小時尖峰只影響數百公尺到數公里，隔太遠本來就不會對上。 */
+/* 用既有的 haversine()（回傳公尺）換算，不要再寫第二份距離公式：
+   兩份實作遲早會不一致，而距離是會寫進結論的數字。 */
 function haversineKm(a, b){
   if (![a.lat, a.lon, b.lat, b.lon].every(Number.isFinite)) return NaN;
-  const R = 6371.0088, rad = x => x * Math.PI / 180;
-  const dLat = rad(b.lat - a.lat), dLon = rad(b.lon - a.lon);
-  const h = Math.sin(dLat/2) ** 2 +
-            Math.cos(rad(a.lat)) * Math.cos(rad(b.lat)) * Math.sin(dLon/2) ** 2;
-  return 2 * R * Math.asin(Math.sqrt(h));
+  return haversine(a.lat, a.lon, b.lat, b.lon) / 1000;
 }
 
 /* 距離對「可比性」代表什麼。門檻是量級上的判讀提示，不是統計檢定。 */
@@ -2974,6 +3064,7 @@ function setSource(src){
       .catch(() => setStatus("複製失敗，請直接截圖下方內容。", "warn"));
   });
   $("findBtn").addEventListener("click", findNearby);
+  $("geoBtn").addEventListener("click", geolocate);
   $("loadBtn").addEventListener("click", loadObservations);
   $("csvBtn").addEventListener("click", exportCSV);
   $("days").addEventListener("change", () => { syncHash(); updateLoadHint(); });
