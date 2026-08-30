@@ -115,13 +115,16 @@
   .card .v{font-family:var(--mono);font-size:23px;font-weight:600;line-height:1.25;letter-spacing:-.02em}
   .card .u{font-size:11.5px;color:var(--muted);font-family:var(--mono)}
 
-  .viewbar{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:0 0 10px}
-  .viewbar-lbl{font-family:var(--mono);font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}
+  .viewbar{display:flex;flex-direction:column;align-items:flex-start;gap:6px;margin:0 0 10px}
+  .viewbar-row{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+  .viewbar-row #viewDayBtns{display:flex;flex-wrap:wrap;gap:0}
+  .viewbar-lbl{font-family:var(--mono);font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);
+    flex:none;min-width:54px}
   .viewbar button{background:#fff;color:var(--ink-2);border:1px solid var(--rule-strong);border-radius:2px;
     font-family:var(--mono);font-size:11.5px;padding:3px 10px;margin-right:-1px;font-weight:500}
   .viewbar button:hover{background:var(--accent-soft)}
   .viewbar button[aria-pressed="true"]{background:var(--accent);color:#fff;border-color:var(--accent)}
-  .viewbar-note{font-size:11px;color:var(--muted);flex-basis:100%}
+  .viewbar-note{font-size:11px;color:var(--muted);align-self:stretch}
   .chartwrap + .chartwrap{margin-top:18px;border-top:1px solid var(--rule);padding-top:12px}
   .chart-title{font-family:var(--mono);font-size:11.5px;color:var(--ink-2);margin:0 0 2px;display:flex;justify-content:space-between;align-items:baseline;gap:8px}
   .chart-title em{font-style:normal;color:var(--muted);font-size:10.5px}
@@ -390,8 +393,14 @@
       <section class="panel">
         <p class="panel-title">連續變化 <span class="count" id="seriesMeta"></span></p>
         <div class="viewbar" id="viewBar" hidden>
-          <span class="viewbar-lbl">檢視區間</span>
-          <span id="viewBtns"></span>
+          <div class="viewbar-row">
+            <span class="viewbar-lbl">檢視區間</span>
+            <span id="viewBtns"></span>
+          </div>
+          <div class="viewbar-row" id="viewDayRow" hidden>
+            <span class="viewbar-lbl">指定日期</span>
+            <span id="viewDayBtns"></span>
+          </div>
           <span class="viewbar-note" id="viewNote"></span>
         </div>
         <div class="serieskey" id="seriesKey"></div>
@@ -503,7 +512,7 @@ const MAX_STATIONS  = 3;
 const CONCURRENCY   = 4;      // 同時對來源站的請求數上限
 const MAX_PAGES     = 200;    // 單一序列的分頁上限，避免失控迴圈
 const PAGE_SIZE     = 100;    // 伺服器單頁上限
-const BUILD         = "2026-08-28c";   // 版本標記，診斷輸出與頁尾都會顯示，用來確認是否讀到新版
+const BUILD         = "2026-08-30a";   // 版本標記，診斷輸出與頁尾都會顯示，用來確認是否讀到新版
 
 /* 環境部開放資料的欄位 → 本頁的測項名稱。PM2.5 用同一個名稱，才能跟微型感測器疊在同一張圖。
    實測欄位：aqx_p_488 用 windspeed／datacreationdate，aqx_p_432 用 wind_speed／publishtime。 */
@@ -1931,7 +1940,23 @@ function render(){ viewCache = null; renderViewBtns();
    若只縮圖表、統計仍算整段，畫面上就會出現「圖是 1 天、表是 14 天」的錯配，
    而且沒有任何地方講得清楚——那比不做這個功能更糟。 */
 let viewDays = 0;
+let viewDay  = "";             // 指定的台灣日期（YYYY-MM-DD）；有值時蓋過 viewDays
 let viewCache = null;          // 一次 render 內重複呼叫 live() 時不重算
+
+/* 已載入資料涵蓋哪些「台灣日曆日」，以及每天各有幾筆。
+   點是以 taipeiParts() 產生的，dayKey 本來就是台灣日，這裡不需要再換算一次。 */
+function loadedDays(){
+  const n = new Map();
+  for (const d of dataset)
+    for (const p of d.points) n.set(p.dayKey, (n.get(p.dayKey) || 0) + 1);
+  return [...n.keys()].sort();
+}
+
+const WD = "日一二三四五六";
+function dayBtnLabel(key){
+  const wd = WD[new Date(key + "T00:00:00Z").getUTCDay()];
+  return `${key.slice(5)} ${wd}`;          // 08-28 四
+}
 
 function loadedSpanDays(){
   const all = dataset.filter(d => d.points.length).flatMap(d => d.points);
@@ -1944,7 +1969,14 @@ function loadedSpanDays(){
 function live(){
   if (viewCache) return viewCache;
   const base = dataset.filter(d => d.points.length);
-  if (!viewDays || !base.length) return (viewCache = base);
+  if (!base.length) return (viewCache = base);
+  // 指定日期優先：整個台灣日曆日（00:00–24:00），不是「往前 24 小時」。
+  // 兩者是不同的問題——看某一天的日變化要對齊日界，滑動視窗會橫跨兩天。
+  if (viewDay)
+    return (viewCache = base
+      .map(d => ({...d, points: d.points.filter(p => p.dayKey === viewDay), windowed: true}))
+      .filter(d => d.points.length));
+  if (!viewDays) return (viewCache = base);
   // 視窗以「已載入資料的最後一刻」為基準，不是以現在——否則來源停更時會整個變空
   let hi = -Infinity;
   for (const d of base) for (const p of d.points) if (p.ms > hi) hi = p.ms;
@@ -1957,27 +1989,49 @@ function live(){
 /* 只列出「已載入資料撐得起來」的選項：載入 1 天卻給「7 天」的按鈕沒有意義，
    按下去也只會得到同一張圖，反而讓人以為資料有問題。 */
 function renderViewBtns(){
-  const bar = $("viewBar"), span = loadedSpanDays();
-  if (!dataset.some(d => d.points.length) || span < 1.05){
+  const bar = $("viewBar"), span = loadedSpanDays(), days = loadedDays();
+  // 只有一天資料時兩種切法都沒有意義；但跨了兩個日曆日就算不到 1.05 天也要給日期鈕
+  if (!dataset.some(d => d.points.length) || (span < 1.05 && days.length < 2)){
     bar.hidden = true;
-    if (viewDays){ viewDays = 0; }          // 資料變短時不要卡在一個看不到東西的視窗
+    viewDays = 0; viewDay = "";             // 資料變短時不要卡在一個看不到東西的視窗
     return;
   }
   bar.hidden = false;
+  if (viewDay && !days.includes(viewDay)) viewDay = "";   // 重新載入後那一天可能不在了
+
   const opts = [{d:0, t:"全部"}, {d:7, t:"7 天"}, {d:3, t:"3 天"}, {d:1, t:"1 天"}]
     .filter(o => o.d === 0 || o.d < span + 0.05);
   if (!opts.some(o => o.d === viewDays)) viewDays = 0;
+  const on = o => !viewDay && o.d === viewDays;
   $("viewBtns").innerHTML = opts.map(o =>
-    `<button type="button" data-d="${o.d}" aria-pressed="${o.d === viewDays}">${o.t}</button>`).join("");
+    `<button type="button" data-d="${o.d}" aria-pressed="${on(o)}">${o.t}</button>`).join("");
   $("viewBtns").querySelectorAll("button").forEach(b =>
     b.addEventListener("click", () => {
-      viewDays = Number(b.dataset.d);
+      viewDays = Number(b.dataset.d); viewDay = "";
       render(); syncHash();
     }));
+
+  /* 指定日期：看某一天的日變化要對齊台灣日界，用「往前 N 天」的滑動視窗會橫跨兩天，
+     早上的尖峰與前一晚的離峰混在同一張圖裡。新到舊排，最近的那天在最左邊。 */
+  const box = $("viewDayBtns");
+  box.innerHTML = days.slice().reverse().map(k =>
+    `<button type="button" data-day="${k}" aria-pressed="${k === viewDay}">${dayBtnLabel(k)}</button>`).join("");
+  box.querySelectorAll("button").forEach(b =>
+    b.addEventListener("click", () => {
+      viewDay = b.dataset.day === viewDay ? "" : b.dataset.day;   // 再按一次取消
+      if (viewDay) viewDays = 0;
+      render(); syncHash();
+    }));
+  $("viewDayRow").hidden = days.length < 2;
+
   // 講清楚「在看多久」與「載入了多久」是兩件事，而且統計面板跟著同一個視窗
-  $("viewNote").textContent = viewDays
-    ? `圖表與下方所有統計都只算最近 ${viewDays} 天（已載入 ${span.toFixed(1)} 天）。`
-    : `顯示已載入的全部 ${span.toFixed(1)} 天。切換區間只改變顯示與統計範圍，不會重新抓資料。`;
+  const shown = live().reduce((a,d) => a + d.points.length, 0);
+  $("viewNote").textContent = viewDay
+    ? `圖表與下方所有統計都只算 ${viewDay}（台灣時間 00:00–24:00）這一天，共 ${shown} 筆。`
+      + `再按一次同一個日期可以取消。`
+    : viewDays
+      ? `圖表與下方所有統計都只算最近 ${viewDays} 天（已載入 ${span.toFixed(1)} 天）。`
+      : `顯示已載入的全部 ${span.toFixed(1)} 天。切換區間只改變顯示與統計範圍，不會重新抓資料。`;
 }
 
 function renderKey(){
@@ -1995,7 +2049,7 @@ function renderKey(){
     // 套了檢視區間時，histCount／apiCount 描述的是「整段載入」而不是眼前這一段，
     // 直接照寫會讓筆數跟圖上看到的對不起來
     const shown = mine.reduce((acc,x) => acc + x.points.length, 0);
-    const src = viewDays
+    const src = (viewDays || viewDay)
       ? ` · 本區間 ${shown} 筆`
       : (nHist ? ` · 歷史檔 ${nHist} ＋ API ${nApi} 筆` : "");
     return `<span><span class="swatch${isHourly(d) ? " ring" : ""}" style="background:${c};border-color:${c}"></span>${
@@ -2634,7 +2688,8 @@ function syncHash(){
   p.set("days", $("days").value);
   if ($("endDate").value) p.set("end", $("endDate").value);
   if ($("focusParam").value) p.set("focus", $("focusParam").value);
-  if (viewDays) p.set("view", String(viewDays));
+  if (viewDay) p.set("day", viewDay);
+  else if (viewDays) p.set("view", String(viewDays));
   history.replaceState(null, "", "#" + p.toString());
   if ($("shareUrl")) $("shareUrl").value = location.href;
   rememberHash(p.toString());
@@ -2692,7 +2747,7 @@ const CACHE_STORE = "airq.lastdata";
 function saveCache(days, end){
   if (!dataset.length) return;
   const body = {
-    saved: Date.now(), days, end, view: viewDays,
+    saved: Date.now(), days, end, view: viewDays, day: viewDay,
     series: dataset.map(d => ({
       uid: d.station.uid, param: d.param, unit: d.unit, cadenceMin: d.cadenceMin,
       apiCount: d.apiCount || 0, histCount: d.histCount || 0,
@@ -2763,6 +2818,8 @@ async function loadFromHash(){
   if (p.get("days")) $("days").value = p.get("days");
   // 檢視區間（0／1／3／7）。渲染時若已載入的資料撐不起這個視窗會自動退回「全部」
   if (p.get("view")) viewDays = Number(p.get("view")) || 0;
+  // 指定日期蓋過相對區間；格式不對就當作沒給，不要讓圖整個變空
+  if (/^\d{4}-\d{2}-\d{2}$/.test(p.get("day") || "")){ viewDay = p.get("day"); viewDays = 0; }
   if (p.get("params")){
     selectedParams = new Set(p.get("params").split(",").map(s => s.trim()).filter(Boolean));
     if (!selectedParams.size) selectedParams.add("PM2.5");
@@ -2814,6 +2871,7 @@ async function loadFromHash(){
                           && String(cache.end || "") === String($("endDate").value || "");
   const n = sameRange ? restoreCache(cache) : 0;
   if (n && typeof cache.view === "number") viewDays = cache.view;
+  if (n && typeof cache.day === "string") viewDay = cache.day;
   if (!n){
     // 這條路徑也不會經過 loadObservations()，pendingNotes 一樣要自己接上去
     const notes0 = pendingNotes.splice(0);
