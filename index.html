@@ -527,7 +527,7 @@ const MAX_STATIONS  = 3;
 const CONCURRENCY   = 4;      // 同時對來源站的請求數上限
 const MAX_PAGES     = 200;    // 單一序列的分頁上限，避免失控迴圈
 const PAGE_SIZE     = 100;    // 伺服器單頁上限
-const BUILD         = "2026-08-30b";   // 版本標記，診斷輸出與頁尾都會顯示，用來確認是否讀到新版
+const BUILD         = "2026-08-30c";   // 版本標記，診斷輸出與頁尾都會顯示，用來確認是否讀到新版
 
 /* 環境部開放資料的欄位 → 本頁的測項名稱。PM2.5 用同一個名稱，才能跟微型感測器疊在同一張圖。
    實測欄位：aqx_p_488 用 windspeed／datacreationdate，aqx_p_432 用 wind_speed／publishtime。 */
@@ -1444,7 +1444,67 @@ async function listEpaStations(){
               : "");
 }
 
-/* ===================== 座標搜尋（微型感測器） ===================== */
+/* ===================== 座標搜尋 ===================== */
+
+/* 空間查詢有好幾種寫法，這台伺服器吃哪一種要試了才知道，所以照這個專案既有的
+   做法（見 filtersFor()）把候選依序試過去，第一個成功的就用。
+
+   **2026-08-30 使用者實測踩到的坑**：原本查 `/Locations` 卻用
+   `geo.intersects(Locations/location,…)` 的屬性路徑 → HTTP 400。
+   `Locations/location` 是**查 `/Things` 時**才對的路徑；查 `/Locations` 這個
+   entity set 時，屬性就叫 `location`。CLAUDE.md 記的那一行沒有錯，錯在套錯了資源。 */
+function geoCandidates(poly){
+  const g = `geography'${poly}'`;
+  const enc = f => encodeURIComponent(f);
+  return [
+    // 官方文件的寫法，資源用對的 /Things
+    {url: `/Things?$top=100&$expand=Locations&$filter=${enc(`geo.intersects(Locations/location,${g})`)}`,
+     kind: "things", label: "Things + geo.intersects(Locations/location)"},
+    // 同一個述詞，但查 /Locations 時屬性要寫成 location
+    {url: `/Locations?$top=100&$expand=Things&$filter=${enc(`geo.intersects(location,${g})`)}`,
+     kind: "locations", label: "Locations + geo.intersects(location)"},
+    // FROST／PostGIS 方言，前兩種都不通時的退路
+    {url: `/Things?$top=100&$expand=Locations&$filter=${enc(`st_intersects(Locations/location,${g})`)}`,
+     kind: "things", label: "Things + st_intersects"},
+    {url: `/Locations?$top=100&$expand=Things&$filter=${enc(`st_within(location,${g})`)}`,
+     kind: "locations", label: "Locations + st_within"}
+  ];
+}
+
+/* 回傳測站陣列。全部候選都失敗才丟出例外（帶著每一種的錯誤，方便回報）。 */
+async function geoSearch(poly){
+  const b = baseFor("iot");
+  const tried = [];
+  for (const c of geoCandidates(poly)){
+    let js;
+    try { js = await api(b + c.url, null, 2); }
+    catch (e){
+      // 連不到主機時換寫法也沒用，直接往外丟
+      if (isNetworkFailure(e)) throw e;
+      tried.push(`${c.label} → ${e.message || e}`);
+      continue;
+    }
+    const rows = js.value || [];
+    if (!rows.length){ tried.push(`${c.label} → 0 筆`); continue; }
+    geoQueryUsed = c.label;
+    return c.kind === "things"
+      ? rows.map(t => {
+          const loc = (t.Locations || []).find(l => l.location && l.location.coordinates);
+          const co = loc && loc.location.coordinates;
+          return mkStation(t, co ? co[1] : NaN, co ? co[0] : NaN, "iot");
+        })
+      : rows.flatMap(loc => {
+          const co = loc.location && loc.location.coordinates;
+          if (!co) return [];
+          return (loc.Things || []).map(t => mkStation(t, co[1], co[0], "iot"));
+        });
+  }
+  const err = new Error(tried.join("；"));
+  err.tried = tried;
+  throw err;
+}
+
+let geoQueryUsed = "";          // 哪一種寫法成功了，寫進診斷輸出
 
 async function findNearby(){
   const la = parseFloat($("lat").value), lo = parseFloat($("lon").value);
@@ -1457,21 +1517,15 @@ async function findNearby(){
   const dLa = rad/111320, dLo = rad/(111320*Math.cos(la*Math.PI/180));
   const S = la-dLa, N = la+dLa, W = lo-dLo, E = lo+dLo;
   const poly = `POLYGON((${W} ${S},${E} ${S},${E} ${N},${W} ${N},${W} ${S}))`;
-  const url = baseFor("iot") + "/Locations?$top=100&$expand=Things&$filter=" +
-              encodeURIComponent(`geo.intersects(Locations/location,geography'${poly}')`);
 
-  let list = [];
+  let list = [], microErr = "", netFail = null;
   try {
-    const js = await api(url, null, 2);
-    list = (js.value || []).flatMap(loc => {
-      const c = loc.location && loc.location.coordinates;
-      if (!c) return [];
-      return (loc.Things || []).map(t => mkStation(t, c[1], c[0], "iot"));
-    });
+    list = await geoSearch(poly);
   } catch (e){
-    await reportFailure(isNetworkFailure(e) ? "無法連線到資料來源。" : "空間查詢失敗。", e, "iot");
-    $("findBtn").disabled = false;
-    return;
+    if (isNetworkFailure(e)) netFail = e;
+    microErr = isNetworkFailure(e)
+      ? "微型感測器：連不到資料來源。"
+      : "微型感測器：空間查詢被伺服器拒絕（" + escHtml(String(e.message || e)) + "）。";
   }
   const seen = new Set();
   const near = list.filter(s => !seen.has(s.uid) && seen.add(s.uid))
@@ -1517,9 +1571,11 @@ async function findNearby(){
 
   let html = "";
   html += `<li style="border:none"><p class="hint" style="margin:0 0 4px">
-    <strong>微型感測器</strong>（半徑 ${rad} m 內）</p></li>`;
+    <strong>微型感測器</strong>（半徑 ${rad} m 內${
+      near.length && geoQueryUsed ? " · 查詢寫法：" + escHtml(geoQueryUsed) : ""}）</p></li>`;
   html += near.length ? near.map(s => row(s, "iot")).join("")
-    : `<li style="border:none"><p class="hint" style="margin:0">半徑內沒有回傳感測器，把半徑放大到 3000 m 試試。</p></li>`;
+    : `<li style="border:none"><p class="hint" style="margin:0">${
+        microErr || "半徑內沒有回傳感測器，把半徑放大到 3000 m 試試。"}</p></li>`;
   html += `<li style="border:none"><p class="hint" style="margin:10px 0 4px">
     <strong>最近的國家空品測站</strong>（不受半徑限制）</p></li>`;
   html += nat.length ? nat.map(s => row(s, "moenv")).join("")
@@ -1531,9 +1587,14 @@ async function findNearby(){
 
   const bits = [];
   bits.push(near.length ? `半徑內有 ${near.length} 個微型感測器（最近 ${Math.round(near[0].dist)} m）`
+          : microErr    ? "微型感測器那半邊失敗了"
                         : "半徑內沒有微型感測器");
   if (nat.length) bits.push(`最近的國家測站是「${stationLabel(nat[0])}」，${(nat[0].dist/1000).toFixed(1)} km`);
-  setStatus(bits.join("；") + "。", near.length || nat.length ? "" : "warn", natErr);
+  // 連不到主機是另一回事（不是查詢寫法的問題），照既有的歸因流程給修法
+  if (netFail){ await reportFailure("無法連線到微型感測器的資料來源。", netFail, "iot"); return; }
+  setStatus(bits.join("；") + "。",
+            near.length || nat.length ? (microErr || natErr ? "warn" : "") : "warn",
+            [microErr, natErr].filter(Boolean).join(" "));
 }
 
 /* 用瀏覽器定位填座標。座標只寫進畫面上的兩個輸入框：不進 localStorage、不進 hash

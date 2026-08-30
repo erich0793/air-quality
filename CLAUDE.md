@@ -89,7 +89,7 @@ API 掛掉時「今天」就補不了，網頁會明說是來源無回應、不�
 | 裝置編號欄位 | `Thing.properties.locationId`，TW 開頭。**格式範例一律不要當成真的裝置**：頁面說明與 README 早期寫的 `TW040203A0506884` 使用者實測回「查無」，已從說明中移除。查詢路徑本身沒問題（`filtersFor()` 第一條就是 `properties/locationId eq …`），錯的是那個沒驗證過的值 |
 | 另一組編號 | `Thing.properties.stationID`，純數字如 `13580653094`、`7737132222` — **使用者已實測 `13580653094` 可查到測站** |
 | Thing 名稱格式（微型） | `智慧城鄉空品微型感測器-<stationID>` |
-| 空間查詢 | 支援 `$filter=geo.intersects(Locations/location,geography'POLYGON((...))')` |
+| 空間查詢 | `geo.intersects`。**屬性路徑要跟著查的資源走**：查 `/Things` 是 `geo.intersects(Locations/location,geography'POLYGON((...))')`；查 `/Locations` 要寫成 `geo.intersects(location,…)`。2026-08-30 使用者實測：查 `/Locations` 卻用 `Locations/location` → **HTTP 400**。`geoSearch()` 現在依序試四種寫法，第一個成功的就用，並把用到的那一種顯示出來 |
 | 字串包含 | 伺服器為 FROST，支援 `substringof('x',name)`；OData 4 的 `contains()` 亦一併嘗試 |
 | 批次歷史下載 | <https://history.colife.org.tw>（大量歷史資料走這裡比逐筆 API 有效率） |
 | 其他來源（備查） | 科技部智慧園區 `STA_AirQuality_MOST/v1.0/`、暨大在地感測器 `STA_AirQuality_Local/v1.0/`（同樣出自 pyCIOT 設定） |
@@ -347,6 +347,12 @@ API 掛掉時「今天」就補不了，網頁會明說是來源無回應、不�
   `geolocate()` 只把座標寫進畫面上的兩個 input，並把瀏覽器回報的 `accuracy` 顯示出來——
   基地台定位可能差好幾公里，那時「最近的測站」沒有意義，必須讓使用者知道。
   定位失敗要分 `PERMISSION_DENIED`／`POSITION_UNAVAILABLE`／逾時三種給不同修法。
+- **空間查詢的屬性路徑要跟著資源走**：`/Things` 用 `Locations/location`，
+  `/Locations` 用 `location`。套錯了伺服器回 **HTTP 400**（2026-08-30 實測）。
+  `geoSearch()` 依序試四種候選（Things+geo.intersects → Locations+geo.intersects →
+  st_intersects → st_within），第一個成功的就用——這是這個專案既有的做法（見 `filtersFor()`），
+  因為伺服器吃哪一種方言要試了才知道。全部失敗時要把每一種試的結果都帶進錯誤訊息，
+  不能只寫「空間查詢失敗」。
 - **找附近的測站：兩種來源要用不同的查法**（`findNearby()`）。微型感測器全國約 10,999 點，
   用 `geo.intersects` 加半徑；國家測站全國只有 77 站、站距動輒數十公里，
   **套同一個半徑幾乎一定是空的**，所以改成整份清單抓回來本機算距離、
