@@ -1,5 +1,5 @@
 {
- "generated": "2026-08-31T21:50:53.819193Z",
+ "generated": "2026-09-01T00:18:36.646045Z",
  "source": "history.colife.org.tw（環境部_智慧城鄉空品微型感測器）",
  "note": "time_utc 為 UTC；本檔由 scripts/hist_extract.py 產生",
  "source_tz": "taipei",
@@ -15,7 +15,7 @@
    ],
    "first": "2026-08-07T16:00:29Z",
    "last": "2026-08-31T21:47:38Z",
-   "rows": 31809
+   "rows": 32212
   }
  }
 }
