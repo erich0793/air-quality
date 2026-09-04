@@ -81,6 +81,31 @@ def download(url: str, dest: str) -> int:
     return total
 
 
+class NotAZip(Exception):
+    """下載成功、但拿到的不是 ZIP。"""
+
+
+def check_zip(path: str):
+    """確認下載回來的真的是 ZIP，不是站方的 HTML 錯誤頁。
+
+    **站方對不存在的檔案回 HTTP 200 ＋ HTML 錯誤頁，不是 404。**
+    這一點對「測項代碼」早就知道（所以有 --probe），但對「日期」同樣成立：
+    2026-09-01 的日檔在站方根本沒有，卻回了 200 加一個 0 MB 的頁面。
+    download() 因此順利完成，接著 zipfile 才以 BadZipFile 炸掉、整個 workflow
+    以離開碼 1 中止——連後面的日子和另一個測項都沒跑到。
+
+    ZIP 的開頭固定是 PK\\x03\\x04。這裡在解壓前先擋下來，讓呼叫端能把它
+    當成「這一天的檔案還沒產出」處理（跟連不到是同一類，不是程式壞了）。
+    """
+    with open(path, "rb") as f:
+        head = f.read(4)
+    if head[:2] != b"PK":
+        size = os.path.getsize(path)
+        raise NotAZip("拿到的不是 ZIP（%d bytes，開頭 %s）——站方對不存在的檔案"
+                      "回 HTTP 200 加 HTML 錯誤頁，不是 404"
+                      % (size, head.hex() or "(空的)"))
+
+
 def probe_params(date: str, codes):
     """測項在檔名裡的代碼只確認了 humidity，其餘用猜的會靜默抓到錯的檔。
        這裡對每個候選代碼發一次請求，只讀前幾百 bytes 就關掉，回報是不是真的 ZIP。"""
@@ -580,12 +605,56 @@ def extract(zpath: str, devices, tz: str, param_label: str, param_code: str,
     return out
 
 
+DONE_FILE = "_hist_days.json"
+
+
+def done_path(outdir: str) -> str:
+    return os.path.join(outdir, DONE_FILE)
+
+
+def done_load(outdir: str) -> dict:
+    try:
+        with open(done_path(outdir), encoding="utf-8") as f:
+            return json.load(f).get("days", {})
+    except (OSError, ValueError):
+        return {}
+
+
+def done_has(outdir: str, device: str, param: str, date: str) -> bool:
+    return date in done_load(outdir).get(device, {}).get(param, [])
+
+
+def done_mark(outdir: str, device: str, param: str, date: str):
+    """記下「這一天的 history 日檔真的抓下來處理過了」。
+
+    為什麼要有這本帳，而不是用列數猜（原本的做法）：
+    `api-append` 改成每小時後，它自己就能在一天內累積到一千多列
+    （實測 2026-09-02 有 1230 列、09-03 有 1272 列，兩天都不滿 1440）。
+    用「列數 ≥ 門檻就當作完整」去判斷，這種日子會被永久跳過，
+    history 的權威日檔再也不會被抓——那一天就固定殘缺下去。
+    「有沒有抓過那個日檔」是個事實，不該用列數去推論它。
+    """
+    if not date:
+        return
+    doc = {"days": done_load(outdir)}
+    days = doc["days"].setdefault(device, {}).setdefault(param, [])
+    if date not in days:
+        days.append(date)
+        days.sort()
+    doc["note"] = ("已經從 history 站抓下來處理過的日子（台灣日期）。"
+                   "列在這裡的日子 --skip-done 不會再下載。"
+                   "來源本身就殘缺的日子也會列在這裡——抓過了就是抓過了，"
+                   "重抓不會變多。要強制重抓就把該日期從這裡刪掉。")
+    os.makedirs(outdir, exist_ok=True)
+    with open(done_path(outdir), "w", encoding="utf-8") as f:
+        json.dump(doc, f, ensure_ascii=False, indent=1, sort_keys=True)
+
+
 def day_rows(outdir: str, device: str, param: str, date: str) -> int:
     """某台裝置在某個「台灣日期」的某測項，CSV 裡已經有幾列非空值。
 
-    給 --skip-complete 用：history 的日檔一天約 1440 列，已經填滿的那一天沒必要
-    再拉一次 220 MB 回來重算。這讓每日排程可以把視窗拉寬（漏跑一次也補得回來）
-    而不會等比例增加對來源站的負載——已經完整的日子直接跳過，不下載。
+    只剩 --seed-done 這個一次性的搬遷在用（見 seed_done()）；
+    判斷「要不要下載」已經改用 done_has() 那本帳，不再靠列數推論。
 
     台灣日 YYYYMMDD ＝ UTC 的 [前一日 16:00, 當日 16:00)，會跨月，兩個月檔都要看。
     時標是固定寬度的 ISO UTC，字串比較就等於時間比較。
@@ -608,6 +677,42 @@ def day_rows(outdir: str, device: str, param: str, date: str) -> int:
                 if r and lo <= r[0] < hi and col < len(r) and r[col].strip():
                     n += 1
     return n
+
+
+def seed_done(outdir: str, devices, param: str, threshold: int):
+    """一次性搬遷：把「顯然已經是從 history 日檔來的」日子寫進帳本。
+
+    在有帳本之前抓的那二十幾天沒有紀錄，直接切換會害它們全部被重抓一次
+    （每天每測項 220 MB）。這裡用列數當一次性的判準：實測完整日是
+    1333～1440 列，而純靠 api-append 累積的日子最多只到 1272 列（2026-09-03），
+    所以門檻取 1300 能把兩群分開。
+
+    **這個判準只在搬遷這一次用**。之後一律以「有沒有真的抓過日檔」為準——
+    列數是結果，不是證據。
+    """
+    root = os.path.join(outdir, "iot")
+    n = 0
+    for dev in devices:
+        d = os.path.join(root, dev)
+        if not os.path.isdir(d):
+            continue
+        dates = set()
+        for fn in sorted(os.listdir(d)):
+            if not fn.endswith(".csv"):
+                continue
+            y, m = fn[:-4].split("-")
+            for day in range(1, 32):
+                try:
+                    dates.add(datetime(int(y), int(m), day).strftime("%Y%m%d"))
+                except ValueError:
+                    break
+        for date in sorted(dates):
+            rows = day_rows(outdir, dev, param, date)
+            if rows >= threshold:
+                done_mark(outdir, dev, param, date)
+                n += 1
+                log("  記入 %s %s：%d 列（門檻 %d）" % (dev, date, rows, threshold))
+    log("共記入 %d 個日子（測項「%s」）" % (n, param))
 
 
 def merge_write(outdir: str, device: str, param: str, data: dict):
@@ -708,8 +813,10 @@ def main():
     ap.add_argument("--tz", choices=["taipei", "utc"], help="來源時間欄位的時區；正式萃取時必填")
     ap.add_argument("--out", default="data")
     ap.add_argument("--dry-run", action="store_true")
-    ap.add_argument("--skip-complete", type=int, default=0, metavar="N",
-                    help="該台灣日期的該測項在 CSV 裡已有 N 列以上就不下載（0＝關閉）")
+    ap.add_argument("--skip-done", action="store_true",
+                    help="帳本裡已經抓過的日子就不再下載（見 data/_hist_days.json）")
+    ap.add_argument("--seed-done", type=int, default=0, metavar="N",
+                    help="一次性搬遷：把 CSV 裡已有 N 列以上的日子記進帳本，不下載任何東西")
     ap.add_argument("--skip-missing", action="store_true",
                     help="某一天的檔案還沒產出時跳過該天（整批都沒抓到仍會失敗）")
     ap.add_argument("--tz-check", action="store_true",
@@ -787,13 +894,16 @@ def main():
             d0 += timedelta(days=1)
     elif a.url:
         dates = [None]
+    elif a.seed_done:
+        dates = []                 # 搬遷模式不下載任何東西，不需要日期
     else:
         ap.error("需要 --date 或 --url 或 --from-file")
 
     devices = [d.strip() for d in a.devices.split(",") if d.strip()]
     if a.tz_check and not devices:
         ap.error("--tz-check 需要 --devices（要比對哪一台裝置）")
-    if not (a.dry_run or a.tz_check or probing):
+    # --seed-done 只讀既有的 CSV 寫帳本，不下載也不解析時間，所以不需要 --tz
+    if not (a.dry_run or a.tz_check or probing or a.seed_done):
         if not devices:
             ap.error("正式萃取需要 --devices")
         if not a.tz:
@@ -817,19 +927,25 @@ def main():
             sys.exit(6)
 
     label = a.label or a.param
+
+    if a.seed_done:
+        if not devices:
+            ap.error("--seed-done 需要 --devices")
+        seed_done(a.out, devices, label, a.seed_done)
+        return
+
     total_rows = 0
     skipped_complete = 0
+    missing_days = []
     for date in dates:
-        # 已經填滿的日子不必再下載一次（見 day_rows()）。只在真的要從站方下載時才判斷：
+        # 抓過的日子不必再抓一次（見 done_mark()）。只在真的要從站方下載時才判斷：
         # --from-file／--url 是除錯用的明確指定，dry-run 與 tz-check 本來就不寫檔。
-        if (a.skip_complete and date and not (a.dry_run or a.tz_check
-                                              or a.from_file or a.url)):
-            have = min(day_rows(a.out, dev, label, date) for dev in devices)
-            if have >= a.skip_complete:
-                log("%s 的「%s」已有 %d 列（門檻 %d），不重複下載"
-                    % (date, label, have, a.skip_complete))
-                skipped_complete += 1
-                continue
+        if (a.skip_done and date and not (a.dry_run or a.tz_check
+                                          or a.from_file or a.url)
+                and all(done_has(a.out, dev, label, date) for dev in devices)):
+            log("%s 的「%s」先前已抓過，不重複下載" % (date, label))
+            skipped_complete += 1
+            continue
         with tempfile.TemporaryDirectory() as tmp:
             if a.from_file:
                 zpath, url = a.from_file, "(本機檔案) " + a.from_file
@@ -839,11 +955,15 @@ def main():
                 log("下載 %s" % url)
                 try:
                     size = download(url, zpath)
+                    # 下載成功不代表拿到檔案：站方對不存在的日期同樣回 200 ＋ HTML。
+                    # 一定要在解壓前擋，否則 zipfile 會以 BadZipFile 直接中止整個執行。
+                    check_zip(zpath)
                 except Exception as e:                            # noqa: BLE001
                     # 當天的檔案還沒產出是正常的（站方約在台灣時間 03:00 才放上去）。
                     # 但「抓不到」與「抓到空的」是兩回事，這裡只跳過，不會偽造成功。
                     if a.skip_missing:
                         log("  取不到 %s 的檔案（%s），跳過這一天" % (date, e))
+                        missing_days.append(date)
                         continue
                     raise
                 log("  完成 %.1f MB" % (size / 1048576))
@@ -867,13 +987,22 @@ def main():
                     total_rows += merge_write(a.out, dev, label, rows)
                 else:
                     log("  裝置 %s 在這個檔案裡沒有資料" % dev)
+                # 抓過了就記帳，即使這台裝置在檔案裡沒有資料——那也是「抓過的結果」，
+                # 重抓不會變出資料來。只有真的沒下載到（見 missing_days）才不記。
+                done_mark(a.out, dev, label, date)
 
     if not (a.dry_run or a.tz_check):
         update_manifest(a.out, a.tz)
-        log("完成，共寫入 %d 列（另有 %d 天已完整而跳過）" % (total_rows, skipped_complete))
-        if total_rows == 0 and skipped_complete == 0:
-            # 每一天都被 --skip-complete 跳過時，0 列是正確結果而不是故障，
-            # 這種情況不能報錯，否則每日排程在資料齊全時反而變紅。
+        log("完成，共寫入 %d 列（另有 %d 天先前已抓過而跳過、%d 天在站方取不到）"
+            % (total_rows, skipped_complete, len(missing_days)))
+        if missing_days:
+            # 站方對不存在的檔案回 200 ＋ HTML，不是 404。跳過是對的，但要留痕跡，
+            # 否則「這一天永遠不會有資料」跟「排程壞了」在畫面上長得一樣。
+            log("::warning::站方沒有這幾天的檔案（回 200 但不是 ZIP）：%s"
+                % "、".join(missing_days))
+        if total_rows == 0 and skipped_complete == 0 and not missing_days:
+            # 每一天都被 --skip-done 跳過、或站方就是沒有那些檔案時，0 列是正確結果
+            # 而不是故障，這種情況不能報錯，否則每日排程在資料齊全時反而變紅。
             log("!! 一列都沒有寫入——請確認裝置編號與欄位對應是否正確")
             sys.exit(4)
 
