@@ -28,7 +28,7 @@
 | `scripts/hist_extract.py` | 從 history.colife.org.tw 萃取指定裝置的歷史觀測值（只用 Python 標準函式庫） |
 | `.github/workflows/hist-backfill.yml` | 手動回填／探測（五種模式） |
 | `.github/workflows/hist-daily.yml` | 每日增量抓取（台灣時間 05:00） |
-| `.github/workflows/api-append.yml` | 每小時把 API 即時值併進歷史檔（補「今天」的缺口） |
+| `.github/workflows/api-append.yml` | 每 30 分鐘把 API 即時值併進歷史檔。**2026-09-01 起是唯一的資料來源** |
 | `data/` | 上面兩個 workflow 的產出，網頁以同源方式讀取 |
 | `worker.js` | Cloudflare Worker CORS proxy，**只有被 CORS 擋下時才需要** |
 | `README.md` | 本說明 |
@@ -254,6 +254,19 @@ index.html   與 API 的近 2 小時合併成單一序列
   不會合成一個看不出來源的總數。
 - `data/` 還沒有資料時靜默略過，不會報錯；以 `file://` 直接開啟時讀不到相對路徑，
   本機測試要起一個 http server（例如 `python3 -m http.server`）。
+
+> ### ⚠️ 站方已停止產出日檔（2026-09-04 確認）
+>
+> `history.colife.org.tw` **2026-08-31 之後不再有每日 ZIP**。以同一次探測做對照：
+> 20260831 的三個測項都回 183 MB 的 ZIP，20260901～09-03 的 11 個候選代碼**全部**
+> 回 HTML 錯誤頁。網址規則沒變，是站方沒有 9 月的檔案。
+>
+> - 2026-08-08 ～ 08-31 的資料完整（每天約 1440 列），已在 repo 裡。
+> - 2026-09-01 起只靠 `api-append` 自己累積，每天約 1200～1300 列。
+> - **已經錯過的時段永久取不回來**（API 只留 2 小時）。
+>
+> `api-append` 因此改成每 30 分鐘跑一次。`hist-daily` 仍保留，站方若恢復就會自動接回來。
+> （未向官方求證，只有探測的觀測證據。）
 
 > **「今天」為什麼常常是空的——以及怎麼補**
 >

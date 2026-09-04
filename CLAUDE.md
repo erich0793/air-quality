@@ -22,7 +22,7 @@
 | `scripts/hist_extract.py` | 從 history 站萃取指定裝置的歷史觀測值（只用標準函式庫） |
 | `.github/workflows/hist-backfill.yml` | 手動回填／探測，五種模式 |
 | `.github/workflows/hist-daily.yml` | 每日增量（台灣時間 05:00，回看 4 天、抓過的日子照帳本跳過）＋ 存 API 快照 ＋ 自動時區判定 |
-| `.github/workflows/api-append.yml` | **每小時**把 API 的滾動視窗併進 CSV，補「今天」的缺口 |
+| `.github/workflows/api-append.yml` | **每 30 分鐘**把 API 的滾動視窗併進 CSV。2026-09-01 起這是**唯一**的資料來源（站方停止產出日檔） |
 | `data/` | 上面兩個 workflow 的產出，網頁以同源方式讀取（`_hist_days.json` 是抓取帳本，網頁不讀） |
 | `worker.js` | Cloudflare Worker CORS proxy，備援用，尚未部署（目前三個來源都不需要） |
 | `README.md` | 部署與使用說明 |
@@ -38,9 +38,9 @@
 環境部開放資料約 4 天）。「往前天數」選再多，**API 那一段**也拿不到更早的資料
 ——這不是程式的 bug，是資料來源的設計。
 
-**微型感測器的跨日資料已經解決**：由 GitHub Actions 事先從
+**微型感測器的跨日資料曾經解決，但來源已停更（見下方 ⚠️）**：由 GitHub Actions 事先從
 <https://history.colife.org.tw> 萃取成 `data/` 裡的小 CSV，網頁同源讀取後與 API 的
-近 2 小時合併，另有排程每小時把 API 的滾動視窗併進 CSV，補「今天」的缺口。
+近 2 小時合併，另有排程每 30 分鐘把 API 的滾動視窗併進 CSV，補「今天」的缺口。
 `13580653094` 已回填 2026-08-08 起的 PM2.5 與 Relative humidity。
 **來源時間欄位的時區已於 2026-08-23 逐筆驗證完成：台灣時間**（吻合 146 筆 vs 5 筆，
 見 `data/_tzcheck/CONFIRMED`），`manifest.json` 的 `source_tz_verified` 為 true。
@@ -48,6 +48,23 @@
 **已知的來源不穩**：2026-08-25～26 實測 `sta.colife.org.tw` 對 GitHub Actions 回
 `Connection refused`（至少 17 小時），但同期 `history.colife.org.tw` 正常。
 API 掛掉時「今天」就補不了，網頁會明說是來源無回應、不是使用者的設定問題。
+
+**⚠️ 來源已停止產出日檔（2026-09-04 以對照探測確認）**：`history.colife.org.tw`
+**2026-08-31 之後不再有每日 ZIP**。同一次執行、相隔幾秒的對照——
+20260831 的 `humidity`／`pm25`／`temperature` 都回 183 MB 的 `application/zip`
+（開頭 `504b0304`），20260901／02／03 的 **11 個候選代碼全部**回
+`text/html`（開頭 `3c21444f` ＝ `<!DO`）。網址規則沒變，是站方沒有 9 月的檔案。
+**這推翻了整個專案原本的跨日資料來源。**現況：
+
+- 2026-08-08 ～ 08-31 完整（每天約 1440 列），已在 repo 裡，安全。
+- 2026-09-01 起只剩 `api-append` 自己累積，每天約 1200～1300 列（不是 1440）。
+- **已經錯過的時段永久取不回來**——API 只留 2 小時，沒有第二條路。
+
+因此 `api-append` 從每小時再縮短到**每 30 分鐘**：它現在是唯一的來源，
+`hist-daily` 那層保險沒有了，漏跑一次就是永久少一段。
+`hist-daily` 仍保留（每天 8 個小請求），站方若恢復產出就會自動接回來。
+**未向官方求證**，只有這次探測的觀測證據；先前查到的「資料服務只提供到 2026-12-01」
+看來提早發生，或至少日檔這一塊已經停了。
 
 **已知的排程不穩（與來源不穩是兩件事）**：2026-08-28 查證，`hist-daily` 的
 08-27T21:00Z 那一次 GitHub **完全沒有觸發**，`api-append` 在 08-26～28 之間
@@ -91,7 +108,7 @@ API 掛掉時「今天」就補不了，網頁會明說是來源無回應、不�
 | Thing 名稱格式（微型） | `智慧城鄉空品微型感測器-<stationID>` |
 | 空間查詢 | `geo.intersects`。**屬性路徑要跟著查的資源走**：查 `/Things` 是 `geo.intersects(Locations/location,geography'POLYGON((...))')`；查 `/Locations` 要寫成 `geo.intersects(location,…)`。2026-08-30 使用者實測：查 `/Locations` 卻用 `Locations/location` → **HTTP 400**。`geoSearch()` 現在依序試四種寫法，第一個成功的就用，並把用到的那一種顯示出來 |
 | 字串包含 | 伺服器為 FROST，支援 `substringof('x',name)`；OData 4 的 `contains()` 亦一併嘗試 |
-| 批次歷史下載 | <https://history.colife.org.tw>（大量歷史資料走這裡比逐筆 API 有效率） |
+| 批次歷史下載 | <https://history.colife.org.tw>。**2026-08-31 之後不再產出日檔**（2026-09-04 對照探測：20260831 三個測項都是 183 MB 的 ZIP，20260901～03 的 11 個代碼全部回 HTML）。歷史只到 08-31 為止 |
 | 其他來源（備查） | 科技部智慧園區 `STA_AirQuality_MOST/v1.0/`、暨大在地感測器 `STA_AirQuality_Local/v1.0/`（同樣出自 pyCIOT 設定） |
 
 ---
@@ -492,7 +509,10 @@ API 掛掉時「今天」就補不了，網頁會明說是來源無回應、不�
    統計單位是小時平均，`n` ＝有效小時數；尖峰＝台灣時間 07–09／17–19；
    **假日只認週六日，國定假日與補班日尚未納入**（要做得先內建假日表，或改抓行政院行事曆）。
    注意：這個面板的 `n` 同樣有自相關問題（同「下一輪必修」第 2、3 項），做那一輪時一併檢視。
-6. **長期資料累積**：因為 STA 只留約 2 小時，這一項的價值比原本高得多——
+6. **長期資料累積（優先序已提高：history 來源已停更，這是唯一的累積管道）**：
+   2026-09-01 起 `api-append` 是唯一來源，每天約 1200～1300 列而不是 1440，
+   而且 GitHub 的 schedule 漏跑一次就永久少一段。
+   因為 STA 只留約 2 小時，這一項的價值比原本高得多——
    定期把觀測值寫進 Supabase（使用者已有帳號），是除了 history 批次下載以外
    唯一能累積歷史的辦法。歷史資料不變動故可永久快取；累積數月後才有足夠樣本做統計檢定。
    需要排程（Supabase cron／GitHub Actions），純靜態網頁本身做不到。
