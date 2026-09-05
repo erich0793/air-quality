@@ -146,6 +146,14 @@
   .provhead .dot{width:9px;height:9px;border-radius:50%;flex:none}
   .provdl{display:grid;grid-template-columns:max-content 1fr;gap:3px 10px;margin:0;
           font-size:11.5px;line-height:1.5}
+  /* 窄螢幕：卡片單欄，且欄位名與值改上下排。兩欄擠在 <400px 時，
+     值那一欄只剩百來 px，長識別碼與官方名稱會被硬斷在字中間。 */
+  @media (max-width:560px){
+    .provgrid{grid-template-columns:1fr}
+    .provdl{grid-template-columns:1fr;gap:0}
+    .provdl dt{margin-top:6px;font-size:10.5px;letter-spacing:.04em}
+    .provdl dt:first-child{margin-top:0}
+  }
   .provdl dt{color:var(--ink-2);white-space:nowrap}
   .provdl dd{margin:0;word-break:break-word}
   .provdl code{font-size:10.5px}
@@ -203,7 +211,7 @@
       三個資料來源並列：環境部<strong>智慧城鄉空品微型感測器</strong>（1–3 分鐘，貼裝置編號）與
       <strong>國家空品測站</strong>兩種介接（每小時，打測站名稱）。同一測項可疊在同一張圖上，
       用來看微型感測器相對於法規等級測站的差異方向與時間結構。
-      微型感測器的跨日資料由 GitHub Actions 事先萃取進 <code>data/</code>，網頁同源讀取後與 API 的近 2 小時合併。
+      微型感測器的跨日資料由 GitHub Actions 事先萃取進 <code>data/</code>，網頁同源讀取後與 API 的近 4～5 小時合併。<strong>來源的每日檔已於 2026-08-31 停止產出</strong>，之後的資料改由每 30 分鐘的排程自行累積。
     </p>
   </header>
 
@@ -219,7 +227,7 @@
         <div class="tabs tabs-3" role="group" aria-label="資料來源">
           <button type="button" class="tab on" id="tabIot" aria-pressed="true">微型感測器<small>3 分鐘 · 編號</small></button>
           <button type="button" class="tab" id="tabMoenv" aria-pressed="false">國家測站<small>77 站 · 近 4 天</small></button>
-          <button type="button" class="tab" id="tabEpa" aria-pressed="false">國家測站 STA<small>66 站 · 近 2 小時</small></button>
+          <button type="button" class="tab" id="tabEpa" aria-pressed="false">國家測站 STA<small>66 站 · 保留期未實測</small></button>
         </div>
 
         <div class="field" id="moenvKeyBox" style="display:none">
@@ -270,7 +278,7 @@
         <details id="histBox" style="display:none">
           <summary>跨日資料：探測 history.colife.org.tw</summary>
           <p class="hint" style="margin-top:8px">
-            微型感測器的 API 只保留最近約 2 小時。完整歷史在
+            微型感測器的 API 只保留最近約 4～5 小時。完整歷史在
             <a href="https://history.colife.org.tw" target="_blank" rel="noopener">history.colife.org.tw</a>
             以檔案打包提供。<strong>我還不知道那些檔案的網址規則與格式</strong>，所以先探測：
             到該站找到「智慧城鄉空品微型感測器」的任一檔案，在下載連結上按右鍵複製網址貼進來。
@@ -422,7 +430,7 @@
         <div id="charts"><p class="hint" style="margin:0">尚無資料。</p></div>
         <p class="hint">
           細線＝微型感測器（分鐘級原始值）；粗線加空心圓點＝國家空品測站（小時值，已是該小時平均）。
-          <strong>各來源的可回溯長度差很多</strong>：API 本身只留最近約 2 小時（微型感測器與 STA）
+          <strong>各來源的可回溯長度差很多</strong>：API 本身只留最近約 4～5 小時（微型感測器實測；STA 未實測）
           或約 4 天（環境部開放資料）；微型感測器更早的部分來自 repo 事先萃取好的歷史檔，
           圖例會<strong>分開標示</strong>兩段的筆數。圖例上每一站後面的數字就是它自己的涵蓋範圍。
           兩者時間解析度不同，只能比較趨勢與同一小時的水準，<strong>不可逐點相減</strong>。
@@ -457,6 +465,13 @@
       <section class="panel">
         <p class="panel-title">小時統計 <span class="count" id="tableMeta">依測站 × 小時</span></p>
         <div class="tablescroll"><table id="statTable"><tbody><tr><td class="hint" style="border:none">尚無資料。</td></tr></tbody></table></div>
+        <p class="hint">
+          每一格是<strong>該時段的小時平均再對所有天數取平均</strong>，
+          <code>n</code> 是**有幾天**在這個時段有有效的小時平均（不是原始筆數）。
+          兩個來源的時間解析度不同，先降頻成小時才可比——這與下面的分層統計、
+          兩測點比較用的是同一個統計單位。有效筆數不足的小時整格排除，不補值。
+          「最大」是各天小時平均的最大值，不是瞬時最大值。
+        </p>
       </section>
 
       <section class="panel">
@@ -471,7 +486,10 @@
       </section>
 
       <section class="panel">
-        <p class="panel-title">來源間偏差 <span class="count" id="biasMeta"></span></p>
+        <!-- 面板名稱是「兩測點差異」不是「偏差」：兩台不在同一個位置，差值裡混著真實的
+             空間濃度梯度，叫 bias 會讓人以為那是儀器誤差、可以拿來校正（原則 3）。
+             id 維持 bias/biasMeta 只為了不動既有選擇器，畫面上不出現這個字。 -->
+        <p class="panel-title">兩測點差異 <span class="count" id="biasMeta"></span></p>
         <div id="bias"><p class="hint" style="margin:0">同時加入一個國家空品測站與至少一個微型感測器，並讓兩者有共同測項，才會出現配對統計。</p></div>
       </section>
     </div>
@@ -487,22 +505,22 @@
         （b）<strong>國家測站（環境部開放資料）</strong>——<code>https://data.moenv.gov.tw/api/v2/</code>（資料集 40448），
         <strong>77 站全有</strong>（含板橋）、每小時、可回溯約 4 天，<strong>需要 api_key</strong>。
         （c）<strong>國家測站 STA</strong>——<code>https://sta.colife.org.tw/STA_AirQuality_v2/v1.0/</code>，免金鑰，
-        但這個服務<strong>只收錄 66 站</strong>（板橋、土城等不在其中）且只留近 2 小時。
+        但這個服務<strong>只收錄 66 站</strong>（板橋、土城等不在其中），保留期未實測。
         官方文件寫的 <code>sta.ci.taiwan.gov.tw</code> 從瀏覽器連不上，本頁改走 colife。
         (a)(c) 為 OGC SensorThings API v1.0。授權：政府資料開放授權條款第 1 版。</li>
-      <li><strong>跨日資料怎麼來</strong>：三個 API 都只保留近期觀測值（微型感測器與 STA 實測約 2 小時，開放資料約 4 天）。
+      <li><strong>跨日資料怎麼來</strong>：三個 API 都只保留近期觀測值（微型感測器實測約 4～5 小時，開放資料約 4 天）。
         微型感測器的歷史值由 GitHub Actions 從 <code>history.colife.org.tw</code> 的每日 ZIP 事先萃取成
-        <code>data/iot/&lt;裝置&gt;/&lt;月&gt;.csv</code>，網頁以同源方式讀回來，補在 API 那 2 小時的前面；
+        <code>data/iot/&lt;裝置&gt;/&lt;月&gt;.csv</code>，網頁以同源方式讀回來，補在 API 那幾小時的前面；
         合併以<strong>分鐘</strong>為鍵去重，重疊處以 API 為準，狀態列與圖例會<strong>分開標示</strong>兩段筆數。
-        另有排程每 2 小時把 API 的滾動視窗併進 CSV，避免「今天」出現長達近一天的缺口。
+        另有排程每 30 分鐘把 API 的滾動視窗併進 CSV，避免「今天」出現長達近一天的缺口。<strong>來源站已於 2026-08-31 停止產出每日檔</strong>（2026-09-04 以對照探測確認：08-31 三個測項都是 183 MB 的 ZIP，09-01～03 的 11 個候選代碼全部回 HTML 錯誤頁），所以 2026-09-01 起只剩這個排程在累積，每天約 1200～1300 列而不是 1440。
         <strong>history 檔的時間欄位沒有時區標記</strong>，目前以台灣時間解讀；未經逐筆驗證前，
         狀態列會明講這件事（驗證完成後該提示自動消失）。</li>
       <li><strong>編號比對</strong>：微型感測器依序試 <code>properties/locationId</code>、<code>properties/stationID</code>、完整 <code>name</code>、名稱片段；國家測站依序試 <code>properties/stationName</code>、<code>name</code>、<code>properties/stationID</code>、名稱片段。命中即停。</li>
       <li><strong>時區</strong>：API 的 <code>phenomenonTime</code> 為 UTC，本頁一律轉為台灣時間（UTC+8）後才分組與繪圖。若 <code>phenomenonTime</code> 是時間區間（<code>起/迄</code>），取<strong>區間起點</strong>當作該筆的時標。</li>
       <li><strong>分頁</strong>：SensorThings API 單頁上限 100 筆。本頁先以 <code>$count=true</code> 取總筆數再用 <code>$skip</code> 併發取回（上限 4）；若伺服器未回 <code>@iot.count</code>，改為逐頁跟隨 <code>@iot.nextLink</code>。單頁失敗會自動重試（僅對 429／5xx），仍失敗則計數並在狀態列標示「資料不完整」——不會靜默略過。</li>
-      <li><strong>兩個來源的可比性</strong>：國家測站是法規等級儀器（β 射線／震盪天平等）並經品保程序，微型感測器多為光散射法，靈敏度與準確度不同，環境部明示微型感測器數據不宜直接比對空氣品質標準，只適合觀察<strong>相對趨勢與時間 pattern</strong>；高濕度下光散射法對 PM2.5 常有正偏誤。兩者疊圖的用途是看偏差方向與時間結構，不是校正。</li>
+      <li><strong>兩個來源的可比性</strong>：國家測站是法規等級儀器（β 射線／震盪天平等）並經品保程序，微型感測器多為光散射法，靈敏度與準確度不同，環境部明示微型感測器數據不宜直接比對空氣品質標準，只適合觀察<strong>相對趨勢與時間 pattern</strong>；高濕度下光散射法對 PM2.5 常有正偏誤。兩者疊圖的用途是看差異的方向與時間結構，不是校正，也不可逐點相減。</li>
       <li><strong>缺值</strong>：不內插、不填補。中斷處直接斷線（斷線門檻＝該序列取樣間隔中位數的 2.5 倍，微型感測器至少 20 分鐘）。小時有效筆數不足（門檻＝<code>min(5, ceil(每小時應有筆數 × 0.6))</code>，隨該序列實際取樣頻率調整）標記為低樣本（半透明）；小時值序列本來每小時就只有 1 筆，不套用此標記。</li>
-      <li><strong>分層與偏差量化</strong>：分層統計與來源間偏差一律以<strong>小時平均</strong>為單位（兩個來源時間解析度不同，先降頻成小時才可比），<code>n</code> 是有效小時數；有效筆數不足的小時整格排除，不以任何方式補值。尖峰定義為台灣時間 07–09 與 17–19 時；假日只認週六日，<strong>未納入國定假日與補班日</strong>。Bland–Altman 只描述兩個方法的一致程度，不判定何者正確，bias 也不得回頭用來校正原始曲線。濕度分層使用該微型感測器自身的 RH。</li>
+      <li><strong>分層與兩測點差異</strong>：分層統計與兩測點差異一律以<strong>小時平均</strong>為單位（兩個來源時間解析度不同，先降頻成小時才可比），<code>n</code> 是有效小時數；有效筆數不足的小時整格排除，不以任何方式補值。尖峰定義為台灣時間 07–09 與 17–19 時；假日只認週六日，<strong>未納入國定假日與補班日</strong>。Bland–Altman 只描述兩組數值的一致程度，不判定何者正確。<strong>兩台不在同一個位置，差值不是儀器偏差（bias），不得回頭用來校正原始曲線</strong>；面板內另有尚未修完的方法學限制說明。濕度分層使用該微型感測器自身的 RH。</li>
       <li><strong>頁面版本</strong>：<code id="buildTag"></code>（回報問題時附上這串，可確認你看到的是不是最新版；手機請長按重新整理或清除快取以取得新版）。</li>
       <li><strong>用途</strong>：個人資料探索工具，非法規依據。若要引用於論文或正式報告，應改用國家測站經品保程序後的數據，並註明資料擷取日期。</li>
     </ol>
@@ -527,7 +545,7 @@ const MAX_STATIONS  = 3;
 const CONCURRENCY   = 4;      // 同時對來源站的請求數上限
 const MAX_PAGES     = 200;    // 單一序列的分頁上限，避免失控迴圈
 const PAGE_SIZE     = 100;    // 伺服器單頁上限
-const BUILD         = "2026-08-30c";   // 版本標記，診斷輸出與頁尾都會顯示，用來確認是否讀到新版
+const BUILD         = "2026-09-05a";   // 版本標記，診斷輸出與頁尾都會顯示，用來確認是否讀到新版
 
 /* 環境部開放資料的欄位 → 本頁的測項名稱。PM2.5 用同一個名稱，才能跟微型感測器疊在同一張圖。
    實測欄位：aqx_p_488 用 windspeed／datacreationdate，aqx_p_432 用 wind_speed／publishtime。 */
@@ -995,12 +1013,25 @@ function parseMoenvTime(s){
    **不可以只靠 Number()**：JS 的 Number("") 與 Number(" ") 都是 0，不是 NaN，
    會把「這個小時沒回報」變成「這個小時是 0 µg/m³」——憑空生出一個資料點，
    而且會把平均拉低。空字串必須先擋掉，真正的 "0" 才留著。 */
-const moenvNum = v => {
+/* 嚴格的數值解析：**所有來源共用**。
+   為什麼不能用 Number()：`Number("")`、`Number(" ")`、`Number(null)` 全都是 **0**，
+   不是 NaN。直接用就會把「這個時間點沒回報」變成「這個時間點是 0 µg/m³」——
+   憑空生出資料點並把平均拉低（原則 5：不得產生假資料）。
+   這個坑先前只在環境部開放資料那條路修過，2026-09-05 稽核發現 STA 那條還在用
+   裸的 Number()，已一併改用這裡。 */
+const numOrNull = v => {
   const s = String(v == null ? "" : v).trim();
   if (s === "" || !/^[-+]?(\d+\.?\d*|\.\d+)([eE][-+]?\d+)?$/.test(s)) return null;
   const n = Number(s);
   return Number.isFinite(n) ? n : null;
 };
+const moenvNum = numOrNull;
+
+/* 負值該不該丟，要看測項。
+   PM2.5／PM10／濕度這類量本質上非負，負值是儀器雜訊，丟掉是對的；
+   但**溫度可以是負的**，一律丟會靜默刪掉合法觀測值。 */
+const NON_NEGATIVE = /(PM|pm)|濕度|humidity|RH|O3|NO2|SO2|CO|臭氧|懸浮/;
+const dropsNegative = param => NON_NEGATIVE.test(String(param || ""));
 
 function moenvStation(rec){
   const id = rec.siteid || rec.sitename;
@@ -1054,7 +1085,8 @@ async function loadMoenvStation(st, days, startUTC, endUTC, warns){
       .filter(x => x.ms >= startUTC && x.ms <= endUTC)
       .map(x => { const raw = x.rec[ds.id] !== undefined ? x.rec[ds.id] : x.rec[ds.alt];
                   const v = moenvNum(raw);
-                  return v === null || v < 0 ? null : {...taipeiParts(x.ms), value: v}; })
+                  return v === null || (dropsNegative(ds.name) && v < 0)
+                    ? null : {...taipeiParts(x.ms), value: v}; })
       .filter(Boolean);
     dataset.push({station: st, param: ds.name, unit: ds.unit, points, cadenceMin: medianStepMin(points) || 60});
     if (!points.length)
@@ -1640,7 +1672,7 @@ function geolocate(){
 
 function renderPicked(){
   const ul = $("stationList");
-  $("stCount").textContent = picked.length ? picked.length + " / " + MAX_STATIONS : "";
+  $("stCount").textContent = picked.length ? picked.length + " / " + MAX_STATIONS + " 站（上限）" : "";
   if (!picked.length){
     ul.innerHTML = '<li style="border:none"><p class="hint" style="margin:0">還沒有測站。</p></li>';
     $("loadBtn").disabled = true;
@@ -1789,7 +1821,7 @@ function medianStepMin(points){
   return d[Math.floor(d.length/2)] / 60e3;
 }
 
-/* 這兩個 STA endpoint 只保留近期觀測值（實測：微型感測器約 2 小時）。
+/* 這兩個 STA endpoint 只保留近期觀測值（實測：微型感測器約 4～5 小時）。
    先問出該 datastream 最舊／最新的一筆，之後才能把「沒資料」歸因到保留期而不是分頁失敗。 */
 async function probeRange(st){
   if (st.src === "moenv") return;      // 範圍在載入觀測值後才確定（見 loadMoenvStation）
@@ -1822,10 +1854,10 @@ function rangeText(r){
 }
 
 /* ============ repo 內的歷史資料（由 GitHub Actions 事先萃取） ============
-   微型感測器的 API 只保留約 2 小時，跨日資料只存在 history.colife.org.tw 的每日 ZIP，
+   微型感測器的 API 只保留約 4～5 小時，跨日資料只存在 history.colife.org.tw 的每日 ZIP，
    而那些檔案每天每測項約 220 MB 且 CORS 被擋，瀏覽器不可能自己處理。
    所以改由 GitHub Actions 在伺服器端篩成小 CSV 放進 repo，這裡用**同源**方式讀回來
-   （無 CORS、無金鑰、手機可用），再與 API 的近 2 小時併成一條序列。
+   （無 CORS、無金鑰、手機可用），再與 API 的近 4～5 小時併成一條序列。
    兩段的來源與筆數必須分開標示，不得混為一談。 */
 
 let histManifest;                    // undefined＝還沒查；null＝確定沒有；物件＝有
@@ -1905,8 +1937,8 @@ async function histPoints(device, param, startUTC, endUTC){
     if (ci < 1) continue;                       // 這個月沒有這個測項
     for (const [ms, c] of tbl.rows){
       if (ms < startUTC || ms > endUTC) continue;
-      const v = Number(c[ci]);
-      if (c[ci] === "" || !isFinite(v) || v < 0) continue;   // 缺值丟棄，不補值
+      const v = numOrNull(c[ci]);                            // 缺值丟棄，不補值
+      if (v === null || (dropsNegative(param) && v < 0)) continue;
       out.push({...taipeiParts(ms), value: v});
     }
   }
@@ -1939,6 +1971,7 @@ async function loadObservations(){
   $("loadBtn").disabled = true; $("csvBtn").disabled = true;
   dataset = [];
   histFetchFailed = false;                   // 這一輪重新判斷
+  let partial = false;                       // 有任何一段沒抓完整 → 不可以存快取
   const warns = pendingNotes.splice(0);      // 併入回復測站時累積的提醒
 
   try {
@@ -1994,18 +2027,26 @@ async function loadObservations(){
         const res = await fetchSeries(b, ds.id, isoStart, isoEnd, sig, (d,n) =>
           setStatus(`「${escHtml(lbl)}」${escHtml(ds.name)}：${d}/${n} 頁…`, "busy"));
 
+        const negDrop = dropsNegative(ds.name);
+        let outOfRange = 0;
         const points = res.rows.map(o => {
           const ms = parseMs(o.phenomenonTime);
-          const v = Number(o.result);
-          if (ms === null || !isFinite(v) || v < 0) return null;
+          const v = numOrNull(o.result);          // 不可用 Number()：""／null 會變成 0
+          if (ms === null || v === null || (negDrop && v < 0)) return null;
+          // 伺服器端的 $filter 不一定被遵守（本專案已經踩過兩次：authority 過濾回 0 筆、
+          // 空間查詢回 400）。這裡在本機再過濾一次，否則伺服器忽略 $filter 時，
+          // 畫面會標著「N 天」卻畫出別的日子的資料，而且完全看不出來。
+          if (ms < startUTC || ms > endUTC){ outOfRange++; return null; }
           return {...taipeiParts(ms), value: v};
         }).filter(Boolean).sort((a,b2) => a.ms - b2.ms);
+        if (outOfRange)
+          warns.push(`「${lbl}」${ds.name}：伺服器回了 ${outOfRange} 筆在所選區間之外的觀測值，已在本機濾掉。`);
 
         // 同一時標可能重複回傳，去重
         const uniq = [];
         for (const p of points) if (!uniq.length || uniq[uniq.length-1].ms !== p.ms) uniq.push(p);
 
-        // repo 的歷史檔補在 API 那 2 小時的前面，合併成單一序列（以分鐘去重）
+        // repo 的歷史檔補在 API 那幾小時的前面，合併成單一序列（以分鐘去重）
         const hist = st.src === "iot" ? await histPoints(st.stationID, ds.name, startUTC, endUTC) : null;
         const merged = (hist && hist.length) ? mergeByMinute(hist, uniq) : uniq;
 
@@ -2017,8 +2058,8 @@ async function loadObservations(){
           apiCount: uniq.length, histCount: hist ? hist.length : 0
         });
 
-        if (res.failed) warns.push(`「${lbl}」${ds.name}：${res.failed} 頁抓取失敗，資料不完整`);
-        if (res.capped) warns.push(`「${lbl}」${ds.name}：超過單序列 ${MAX_PAGES} 頁上限，只取回前段`);
+        if (res.failed){ warns.push(`「${lbl}」${ds.name}：${res.failed} 頁抓取失敗，資料不完整`); partial = true; }
+        if (res.capped){ warns.push(`「${lbl}」${ds.name}：超過單序列 ${MAX_PAGES} 頁上限，只取回前段`); partial = true; }
         // 保留期不足，且 repo 的歷史檔也沒補上這個測項——三種成因要分清楚，訊息不可混用
         const retained = st.range && st.range.oldest > startUTC + 3600e3 && !(hist && hist.length);
         if (merged.length){
@@ -2074,7 +2115,9 @@ async function loadObservations(){
   syncHash();
   // 抓取失敗時這一份結果是殘缺的，不可以存成快取——否則下次打開會把殘缺的畫面
   // 當成正常結果重現，使用者只會看到「少了一站」而不知道為什麼。
-  if (histFetchFailed) { try { localStorage.removeItem(CACHE_STORE); } catch (e){} }
+  // **分頁失敗與被截斷也算殘缺**：先前只擋了 histFetchFailed，
+  // res.failed／res.capped 照樣被存起來，2026-09-05 稽核以「$skip 一律回 500」重現。
+  if (histFetchFailed || partial) { try { localStorage.removeItem(CACHE_STORE); } catch (e){} }
   else saveCache(days, $("endDate").value);
   if (firstLoad){ collapseAdd(); firstLoad = false; }
 }
@@ -2195,7 +2238,8 @@ function renderKey(){
     const c = colorOf(d.station);
     const mine = L.filter(x => x.station.uid === d.station.uid);
     const own = mine.flatMap(x => x.points).map(p => p.ms);
-    const span = own.length ? fmtSpan(Math.max(...own) - Math.min(...own)) : "—";
+    const e = extent(own);
+    const span = own.length ? fmtSpan(e.hi - e.lo) : "—";
     // 這一站的序列是不是併了 repo 的歷史檔——來源不同，圖例要講明
     const nHist = mine.reduce((acc,x) => acc + (x.histCount || 0), 0);
     const nApi  = mine.reduce((acc,x) => acc + (x.apiCount  || 0), 0);
@@ -2222,8 +2266,9 @@ function renderCards(){
   }
   box.innerHTML = L.map(d => {
     const last = d.points[d.points.length-1];
+    // 用與 describe()／分層統計相同的 quantile()，否則同樣叫「中位數」卻是兩種算法
     const v = d.points.map(p => p.value).sort((a,b2) => a-b2);
-    const med = v[Math.floor(v.length/2)], p95 = v[Math.floor(v.length*0.95)];
+    const med = quantile(v, .5), p95 = quantile(v, .95);
     const isPM = d.param === "PM2.5";
     const bd = isPM ? bandFor(last.value) : null;
     return `
@@ -2242,11 +2287,30 @@ function renderCards(){
   $("shareUrl").value = location.href;
 }
 
+/* Y 軸上限。階梯要夠細，否則圖會有一大半是空白：
+   舊版只有 1／2／5／10，最大值 20 → 上限 50，曲線被壓在下緣
+   （使用者實際看到的就是「資料只到 20，Y 軸卻畫到 50」）。
+   補上 1.5／2.5／3／4／6／8 之後，22.4 落在 25 而不是 50。
+   候選都挑 4 等分後刻度仍然好讀的數。 */
+const NICE_STEPS = [1, 1.5, 2, 2.5, 3, 4, 5, 6, 8, 10];
 function niceCeil(x){
   if (!isFinite(x) || x <= 0) return 1;
   const e = Math.pow(10, Math.floor(Math.log10(x)));
   const m = x/e;
-  return (m <= 1 ? 1 : m <= 2 ? 2 : m <= 5 ? 5 : 10) * e;
+  return (NICE_STEPS.find(s2 => m <= s2 + 1e-9) || 10) * e;
+}
+
+/* 取極值不要用 Math.max(...陣列)：展開是把每個元素當成一個引數，
+   陣列一大就丟 RangeError（本機實測 20 萬個就爆）。
+   3 站 × 14 天 × 每分鐘 ≈ 6 萬點已經逼近引擎上限，而且上限是引擎相依的。 */
+function extent(arr, pick){
+  let lo = Infinity, hi = -Infinity;
+  for (const x of arr){
+    const v = pick ? pick(x) : x;
+    if (v < lo) lo = v;
+    if (v > hi) hi = v;
+  }
+  return {lo, hi};
 }
 
 const gapMs = d => Math.max(20*60e3, d.cadenceMin*2.5*60e3);
@@ -2262,7 +2326,7 @@ function renderCharts(){
     (a === focusParam() ? -1 : b === focusParam() ? 1 : 0) || paramSort(a,b));
 
   const allPts = L.flatMap(d => d.points);
-  const t0 = Math.min(...allPts.map(p => p.ms)), t1 = Math.max(...allPts.map(p => p.ms));
+  const {lo: t0, hi: t1} = extent(allPts, p => p.ms);
 
   const G = chartGeom();
   box.innerHTML = "";
@@ -2302,7 +2366,7 @@ function drawChart(svg, ro, series, t0, t1, H, geom){
   const g = geom || chartGeom();
   const W = g.W, ML = g.ML, MR = g.MR, MT = g.MT, MB = g.MB;
   const all = series.flatMap(d => d.points);
-  const vMax = niceCeil(Math.max(...all.map(p => p.value)) * 1.12) || 1;
+  const vMax = niceCeil(extent(all, p => p.value).hi * 1.12) || 1;
   const X = ms => ML + (ms-t0)/(t1-t0 || 1)*(W-ML-MR);
   const Y = v  => H - MB - v/vMax*(H-MT-MB);
 
@@ -2405,7 +2469,8 @@ function renderRaster(){
   }
   const isPM = pm === "PM2.5";
   const allV = L.flatMap(d => d.points.map(p => p.value));
-  const scale = {min: Math.min(...allV), max: Math.max(...allV)};
+  const ex = extent(allV);
+  const scale = {min: ex.lo, max: ex.hi};
 
   let html = "";
   L.forEach((d,i) => {
@@ -2463,23 +2528,38 @@ function renderTable(){
   $("tableMeta").textContent = L.length ? pm + " · 依測站 × 小時" : "依測站 × 小時";
   if (!L.length){ tb.innerHTML = '<tr><td class="hint" style="border:none">尚無資料。</td></tr>'; return; }
   let rows = `<tr><th>小時</th>${L.map(d =>
-    `<th>${escHtml(stationLabel(d.station))}<br><span style="font-weight:400;text-transform:none;letter-spacing:0">平均 / 最大 (n)</span></th>`).join("")}</tr>`;
+    `<th>${escHtml(stationLabel(d.station))}<br><span style="font-weight:400;text-transform:none;letter-spacing:0">平均 / 最大 (n 天)</span></th>`).join("")}</tr>`;
+
+  /* **先降頻成小時平均，再依「一天中的第幾個小時」聚合。**
+     原本是直接把原始點依 p.hour 累加，有三個問題：
+     (a) n 是原始筆數——微型是分鐘數（每小時 60）、國家測站是小時數（每小時 1），
+         兩欄不同單位卻並排，讀起來像微型的樣本多 60 倍；
+     (b) 平均是「原始點的平均」而不是「小時平均的平均」，缺分鐘的小時會被加權得比較輕，
+         而且與旁邊的分層統計、兩測點差異面板用的不是同一個統計單位；
+     (c) 沒有套低樣本門檻，一小時只有 1 筆也照樣給滿精度的平均。
+     CLAUDE.md 的原則就是「統計一律以小時平均為單位」，這張表先前沒有遵守。 */
   const agg = L.map(d => {
-    const by = Array.from({length:24},() => ({sum:0,n:0,max:0}));
-    for (const p of d.points){ const a = by[p.hour]; a.sum += p.value; a.n++; a.max = Math.max(a.max,p.value); }
+    const {map} = hourlyMap(d);                  // 小時平均，低樣本小時已整格排除
+    const by = Array.from({length:24}, () => ({sum:0, n:0, max:-Infinity}));
+    for (const [hk, v] of map){
+      const a = by[hourInfo(hk).hour];
+      a.sum += v; a.n++; if (v > a.max) a.max = v;
+    }
     return by;
   });
   for (let h = 0; h < 24; h++){
     rows += `<tr><td>${String(h).padStart(2,"0")}:00</td>` + agg.map(a => {
       const c = a[h];
-      return `<td>${c.n ? c.sum/c.n < 10 ? (c.sum/c.n).toFixed(2) : (c.sum/c.n).toFixed(1) : "—"}${
-        c.n ? " / " + c.max.toFixed(1) + ` <span style="color:var(--muted)">(${c.n})</span>` : ""}</td>`;
+      if (!c.n) return "<td>—</td>";
+      const mean = c.sum/c.n;
+      return `<td>${mean < 10 ? mean.toFixed(2) : mean.toFixed(1)} / ${c.max.toFixed(1)} ` +
+             `<span style="color:var(--muted)">(${c.n})</span></td>`;
     }).join("") + "</tr>";
   }
   tb.innerHTML = rows;
 }
 
-/* ===================== 分層統計與來源間偏差 ===================== */
+/* ===================== 分層統計與兩測點差異 ===================== */
 
 function quantile(sorted, q){
   if (!sorted.length) return NaN;
@@ -2667,7 +2747,10 @@ function renderBias(){
   const box = $("bias"), pm = focusParam();
   const L = live().filter(d => d.param === pm);
   const iot = L.filter(d => d.station.src === "iot");
-  const epa = L.filter(d => d.station.src === "epa");
+  // **國家測站有兩個來源**：STA（epa）與環境部開放資料（moenv）。
+  // 只認 epa 會讓這個面板對真實情境永遠不出現——板橋等站不存在於 STA 那個服務
+  // （實測只有 66 站），使用者實際加的是 moenv 的板橋。2026-09-05 稽核發現。
+  const epa = L.filter(d => d.station.src === "epa" || d.station.src === "moenv");
   $("biasMeta").textContent = "";
 
   if (!iot.length || !epa.length){
@@ -2685,14 +2768,27 @@ function renderBias(){
       for (const [k,v] of A.map) if (B.map.has(k)) pairs.push({hk:k, micro:v, nat:B.map.get(k)});
       pairs.sort((a,b) => a.hk - b.hk);
 
+      const km = haversineKm(d.station, ref.station);
+      /* 距離決定了這組數字能不能叫「偏差」。相距數十公里時，差值裡混著真實的
+         空間濃度梯度，跟儀器差異分不開——這個警告必須跟數字放在一起，
+         放在別的面板等於沒有。門檻與 distanceNote() 一致。 */
+      const farNote = !Number.isFinite(km) ? ""
+        : km >= 2
+          ? `<p class="hint" style="color:var(--warn);margin:2px 0 6px">
+              兩站相距 <strong>${km < 10 ? km.toFixed(2) : km.toFixed(1)} km</strong>，
+              <strong>不是並置（co-location）</strong>。下面的差值同時混合了「儀器／方法差異」與
+              「真實的空間濃度梯度」，用現有資料拆不開，<strong>因此不能當成儀器偏差，也不可作為校正依據</strong>。
+              ${km >= 30 ? "這個距離已經可能分屬不同空品區，連「同一個空氣環境」都稱不上。" : ""}</p>`
+          : `<p class="hint" style="margin:2px 0 6px">兩站相距 ${(km*1000).toFixed(0)} m。</p>`;
+
       const head = `<p style="font-family:var(--mono);font-size:11px;color:var(--ink-2);margin:16px 0 4px">
         <span class="swatch" style="background:${colorOf(d.station)}"></span>${escHtml(stationLabel(d.station))}
         <span class="badge iot">微型</span> vs
         <span class="swatch" style="background:${colorOf(ref.station)};margin-left:4px"></span>${escHtml(stationLabel(ref.station))}
-        <span class="badge epa">國站</span></p>`;
+        <span class="badge ${ref.station.src}">${SOURCES[ref.station.src].badge}</span></p>`;
 
       if (pairs.length < 3){
-        html += head + `<p class="hint" style="margin:0">配對到的小時只有 ${pairs.length} 個，不足以計算偏差統計。</p>`;
+        html += head + farNote + `<p class="hint" style="margin:0">配對到的小時只有 ${pairs.length} 個，不足以計算差異統計。</p>`;
         continue;
       }
 
@@ -2705,13 +2801,13 @@ function renderBias(){
       const r = pearson(pairs.map(p => p.micro), pairs.map(p => p.nat));
       const natMean = describe(pairs.map(p => p.nat)).mean;
 
-      html += head +
+      html += head + farNote +
         `<table><tbody>
-          <tr><th>配對小時 n</th><th>bias（微型−國家）</th><th>bias 95% CI</th><th>MAE</th><th>RMSE</th><th>Pearson r</th></tr>
+          <tr><th>配對小時 n</th><th>平均差值（微型−國家）</th><th>平均差值 95% CI</th><th>MAE</th><th>RMSE</th><th>Pearson r<sup>※</sup></th></tr>
           <tr><td>${st.n}</td><td>${st.mean >= 0 ? "+" : ""}${fmt(st.mean)} ${escHtml(d.unit)}（相對 ${
             fmt(st.mean/natMean*100, 0)}%）</td><td>${fmt(st.mean-1.96*se)} – ${fmt(st.mean+1.96*se)}</td>
             <td>${fmt(mae)}</td><td>${fmt(rmse)}</td><td>${fmt(r, 3)}</td></tr>
-          <tr><th>差值 SD</th><th colspan="2">Bland–Altman 一致性界限（bias ± 1.96 SD）</th><th colspan="3">配對涵蓋</th></tr>
+          <tr><th>差值 SD</th><th colspan="2">Bland–Altman 一致性界限（平均差值 ± 1.96 SD）</th><th colspan="3">配對涵蓋</th></tr>
           <tr><td>${fmt(st.sd)}</td><td colspan="2">${fmt(loLo)} – ${fmt(loHi)} ${escHtml(d.unit)}</td>
             <td colspan="3">${new Date(pairs[0].hk + 8*3600e3).toISOString().slice(5,16).replace("T"," ")} ～ ${
               new Date(pairs[pairs.length-1].hk + 8*3600e3).toISOString().slice(5,16).replace("T"," ")}
@@ -2720,18 +2816,31 @@ function renderBias(){
         blandAltman(pairs, d, ref) +
         rhStrata(pairs, d);
 
-      if (st.n < 24)
-        html += `<p class="hint" style="color:var(--warn);margin-top:4px">配對小時只有 ${st.n} 個，
-          一致性界限與相關係數的不確定性很大，別當定論。</p>`;
+      const dayCount = new Set(pairs.map(p => taipeiParts(p.hk).dayKey)).size;
+      html += `<p class="hint" style="margin-top:4px">配對涵蓋 <strong>${dayCount} 天</strong>／${st.n} 個小時。
+        逐時 PM2.5 有很強的自相關，<strong>有效獨立樣本接近「天數」而不是「小時數」</strong>，
+        所以上面的 95% CI 會偏窄。</p>`;
+      if (dayCount < 7 || st.n < 24)
+        html += `<p class="hint" style="color:var(--warn);margin-top:2px">
+          只涵蓋 ${dayCount} 天（${st.n} 個小時），證據薄弱，一致性界限與相關係數的不確定性很大，別當定論。</p>`;
     }
   }
 
   html += `<p class="hint" style="margin-top:14px">
     配對方式：微型感測器先降頻成台灣時間的<strong>小時平均</strong>（有效筆數不足的小時整格排除），
     再與國家測站同一小時的值配對；不做內插、不做時間位移。
-    <strong>這是偏差的描述，不是校正</strong>——兩者量測原理不同（光散射 vs 法規等級儀器），
-    Bland–Altman 只描述兩個方法的一致程度，不能用來判定哪一邊「對」，也不得拿 bias 去回頭修正原始曲線。
-    正偏誤在高濕度時尤其常見，若同時載入 RH 會自動做濕度分層。</p>`;
+    <strong>這裡算的是「兩個測點之間的差異」，不是儀器偏差（bias），更不是校正</strong>——
+    兩台不在同一個位置，差值同時包含儀器／方法差異與真實的空間濃度梯度，用現有資料拆不開。
+    Bland–Altman 只描述兩組數值的一致程度，不能用來判定哪一邊「對」，也不得拿這個差值回頭修正原始曲線。
+    光散射法在高濕度時常有正偏誤，若同時載入 RH 會自動做濕度分層。</p>
+    <p class="hint" style="margin-top:6px">
+    <sup>※</sup> <strong>Pearson r 是相關性，不是一致性。</strong>兩台儀器可以 r = 0.99 卻系統性差一倍，
+    r 高不代表兩者的值可以互換，只代表一起漲跌。要看一致性請看上面的一致性界限。</p>
+    <p class="hint" style="margin-top:6px;color:var(--warn)">
+    <strong>方法學上尚未修完的部分</strong>：95% CI 仍以「小時」當獨立樣本計算，逐時濃度有強自相關，
+    區間會偏窄（正確做法是以「日」為 block 的 bootstrap）；一致性界限固定用 ±1.96 SD，
+    若差值離散度隨濃度放大則低濃度過寬、高濃度過窄；Bland–Altman 的 x 軸目前用兩者平均，
+    當一方是參考標準時 Krouwer 建議改用參考值本身。<strong>在這幾項修好之前，這個面板的數字不要用於結論。</strong></p>`;
   box.innerHTML = html;
 }
 
@@ -2743,7 +2852,7 @@ function blandAltman(pairs, d, ref){
   const ML = narrow ? 36 : 52, MR = narrow ? 10 : 14, MT = 12, MB = narrow ? 26 : 30;
   const xs = pairs.map(p => (p.micro + p.nat)/2), ys = pairs.map(p => p.micro - p.nat);
   const st = describe(ys);
-  const x0 = Math.min(...xs), x1 = Math.max(...xs);
+  const xe = extent(xs); const x0 = xe.lo, x1 = xe.hi;
   // y 軸涵蓋所有差值、兩條一致性界限與 0，不做對稱以免浪費半張圖
   const loLo = st.mean - 1.96*st.sd, loHi = st.mean + 1.96*st.sd;
   const yLo0 = Math.min(0, ...ys, loLo), yHi0 = Math.max(0, ...ys, loHi);
@@ -2772,7 +2881,7 @@ function blandAltman(pairs, d, ref){
   out += pairs.map((p,i) =>
     `<circle cx="${X(xs[i]).toFixed(1)}" cy="${Y(ys[i]).toFixed(1)}" r="2.2" fill="${c}" opacity=".55"/>`).join("");
   out += line(0, false, "無差異", "#8A9B96", true);
-  out += line(st.mean, false, "bias", c);
+  out += line(st.mean, false, "平均差值", c);
   out += line(loHi, true, "+1.96SD", "#8A4B12");
   out += line(loLo, true, "−1.96SD", "#8A4B12");
   out += `<text class="axis-lbl" transform="rotate(-90 12 ${(MT+H-MB)/2})" x="12" y="${
@@ -2805,7 +2914,7 @@ function rhStrata(pairs, d){
   }).join("");
   const missing = pairs.filter(p => !H.has(p.hk)).length;
   return `<table style="margin-top:8px"><tbody>
-      <tr><th>濕度分層（該微型感測器自身 RH）</th><th>n（小時）</th><th>bias</th><th>差值 SD</th></tr>
+      <tr><th>濕度分層（該微型感測器自身 RH）</th><th>n（小時）</th><th>平均差值</th><th>差值 SD</th></tr>
       ${rows}
     </tbody></table>` +
     (missing ? `<p class="hint" style="margin:2px 0 0">${missing} 個配對小時沒有對應的 RH 值，未納入分層。</p>` : "");
