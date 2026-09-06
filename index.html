@@ -268,7 +268,7 @@
           <p class="hint" style="margin-top:8px">
             本頁的 SensorThings 服務只收錄 66 站。環境部自己的開放資料平臺
             （<a href="https://data.moenv.gov.tw" target="_blank" rel="noopener">data.moenv.gov.tw</a>，
-            即 data.gov.tw 資料集 40448）有全部 77 站含板橋，但那是**另一支 API**，
+            即 data.gov.tw 資料集 40448）有全部 77 站含板橋，但那是<strong>另一支 API</strong>，
             需要註冊取得 api_key。按下方按鈕會實測 CORS、是否需要 key、以及歷史資料集
             <code>aqx_p_488</code> 能不能取到時間序列——確認可行才值得接進來。
           </p>
@@ -467,7 +467,7 @@
         <div class="tablescroll"><table id="statTable"><tbody><tr><td class="hint" style="border:none">尚無資料。</td></tr></tbody></table></div>
         <p class="hint">
           每一格是<strong>該時段的小時平均再對所有天數取平均</strong>，
-          <code>n</code> 是**有幾天**在這個時段有有效的小時平均（不是原始筆數）。
+          <code>n</code> 是<strong>有幾天</strong>在這個時段有有效的小時平均（不是原始筆數）。
           兩個來源的時間解析度不同，先降頻成小時才可比——這與下面的分層統計、
           兩測點比較用的是同一個統計單位。有效筆數不足的小時整格排除，不補值。
           「最大」是各天小時平均的最大值，不是瞬時最大值。
@@ -545,7 +545,7 @@ const MAX_STATIONS  = 3;
 const CONCURRENCY   = 4;      // 同時對來源站的請求數上限
 const MAX_PAGES     = 200;    // 單一序列的分頁上限，避免失控迴圈
 const PAGE_SIZE     = 100;    // 伺服器單頁上限
-const BUILD         = "2026-09-05a";   // 版本標記，診斷輸出與頁尾都會顯示，用來確認是否讀到新版
+const BUILD         = "2026-09-06a";   // 版本標記，診斷輸出與頁尾都會顯示，用來確認是否讀到新版
 
 /* 環境部開放資料的欄位 → 本頁的測項名稱。PM2.5 用同一個名稱，才能跟微型感測器疊在同一張圖。
    實測欄位：aqx_p_488 用 windspeed／datacreationdate，aqx_p_432 用 wind_speed／publishtime。 */
@@ -583,7 +583,7 @@ const SOURCES = {
     cadence:60, endpointEl:"endpointMoenv", demo:"板橋",
     inputLabel:"測站名稱",
     placeholder:"板橋",
-    hint:'環境部環境資料開放平臺（data.gov.tw 資料集 40448），**全部 77 站都有，含板橋、土城**，'
+    hint:'環境部環境資料開放平臺（data.gov.tw 資料集 40448），<strong>全部 77 站都有，含板橋、土城</strong>，'
        + '每小時一筆、可回溯約 <strong>4 天</strong>（比下一個分頁的 STA 好很多）。'
        + '需要 api_key：到 <a href="https://data.moenv.gov.tw" target="_blank" rel="noopener">data.moenv.gov.tw</a> '
        + '註冊會員後取得，貼在上方欄位。預設關掉頁面就要重貼；勾「記住這支金鑰」才會留在這台裝置上。'
@@ -2004,9 +2004,18 @@ async function loadObservations(){
             `（${hinfo.first ? fmtStamp(Date.parse(hinfo.first)) + " 起" : ""}，共 ${hinfo.rows} 列）。`
           // 沒有 repo 歷史檔＝這台裝置還沒回填。別叫使用者自己去批次下載：
           // 那些檔案每天每測項約 220 MB 且 CORS 被擋，瀏覽器做不到（已實測）。
+          //
+          // **不可以只叫使用者「跑回填 workflow」**：history.colife.org.tw 自
+          // 2026-08-31 之後不再產出日檔（2026-09-04 對照探測確認），回填只補得到
+          // 08-31 以前。使用者看的多半是最近幾天，照那句話做會白跑一次 workflow
+          // 然後發現圖上什麼都沒多。兩條路要分開講。
+          // （站方若恢復產出日檔，把下面這個日期一起更新。）
           : `「${lbl}」：API 只保留 ${rangeText(st.range)}的觀測值，比要求的 ${days} 天短，` +
             `而這台裝置（${st.stationID || "編號不明"}）還沒有預先萃取好的歷史檔。` +
-            `跨日資料要先在 repo 跑一次「回填 history 歷史資料」的 workflow 把它加進來${
+            `兩條路要分開看：<strong>2026-08-31 以前</strong>可以跑一次「回填 history 歷史資料」的 workflow 補進來；` +
+            `<strong>09-01 以後來源已經不再產出日檔</strong>，只能把這個編號加進 ` +
+            `<code>.github/workflows/api-append.yml</code> 的 <code>DEVICES</code>，` +
+            `從加進去那一刻起自己累積——已經過去的時段補不回來${
               man ? "" : "（本站目前完全沒有 data/ 歷史檔，可能是還沒部署新版）"}。`);
         renderPicked();
       }
@@ -2089,10 +2098,21 @@ async function loadObservations(){
   }
 
   const n = dataset.reduce((a,d) => a + d.points.length, 0);
-  const nHist = dataset.reduce((a,d) => a + (d.histCount || 0), 0);
-  // 兩段資料來源不同，筆數要分開講，不能只給一個總數
-  const split = nHist ? `（repo 歷史檔 ${nHist} 筆 ＋ API 即時 ${
-    dataset.reduce((a,d) => a + (d.apiCount || 0), 0)} 筆，重疊的分鐘以 API 為準）` : "";
+  /* 兩段資料來源不同，筆數要分開講，不能只給一個總數。
+     但原本寫成「歷史檔 A ＋ API B」會讓人以為 A+B 等於前面那個總數，**兩者都不成立**：
+     (a) 重疊的分鐘會被去重，A+B 比合併後多；(b) histCount／apiCount 只存在於微型
+     感測器那幾條序列，國家測站的點不在這兩個桶子裡。2026-09-06 使用者的畫面就是
+     6663 ＋ 381 對不上 6988。現在把「微型感測器小計」與去重量都寫出來。 */
+  let nHist = 0, nApi = 0, nIot = 0;
+  for (const d of dataset)
+    if (d.histCount !== undefined || d.apiCount !== undefined){
+      nHist += d.histCount || 0; nApi += d.apiCount || 0; nIot += d.points.length;
+    }
+  const dup = nHist + nApi - nIot;
+  const split = (nHist || nApi)
+    ? `（其中微型感測器 ${nIot} 筆＝repo 歷史檔 ${nHist} ＋ API 即時 ${nApi}${
+        dup > 0 ? ` − 重疊 ${dup}（重疊的分鐘以 API 為準）` : ""}）`
+    : "";
   const head = n
     ? `已載入 ${n} 筆觀測值：${dataset.length} 條序列 / ${new Set(dataset.map(d => d.station.uid)).size} 站 × ${days} 天${split}。`
     : "沒有取回任何觀測值。";
@@ -2103,6 +2123,29 @@ async function loadObservations(){
   if (empty.length && dataset.length)
     warns.push(`這 ${empty.length} 站在所選區間內沒有任何可畫的資料，所以不會出現在圖上：` +
                empty.map(stationLabel).join("、") + "。");
+
+  /* **「回溯不夠久」與「更新落後」是兩件不同的事**，先前只檢查了前者
+     （st.range.oldest > startUTC），所以來源停止更新時畫面上完全沒有說明。
+     2026-09-06 使用者回報：板橋那條線停在 09-02，右邊五天整片空白而狀態列一個字都沒提。
+     這一段補的就是那個缺口——歸因要講明是**來源沒有更新**，
+     不得讓人誤讀成抓取失敗或感測器離線（那是不同的原因，修法也不同）。 */
+  const STALE_MS = 3*3600e3;      // 小時值序列容忍 3 格；再多就不是正常延遲了
+  for (const st of picked){
+    let newest = -Infinity;
+    for (const d of dataset)
+      if (d.station.uid === st.uid && d.points.length)
+        newest = Math.max(newest, d.points[d.points.length - 1].ms);
+    if (newest === -Infinity) continue;        // 完全沒資料，上面的 empty 已經點名
+    const lag = endUTC - newest;
+    if (lag <= STALE_MS) continue;
+    warns.push(`「${escHtml(stationLabel(st))}」最後一筆是 ${fmtStamp(newest)}，` +
+      `距所選區間的結束時間還差 ${fmtSpan(lag)}——圖上這一站右邊那段空白是<strong>來源沒有更新到那麼近</strong>，` +
+      `不是抓取失敗，也不是感測器離線。` +
+      (st.src === "moenv"
+        ? `環境部開放資料的 aqx_p_488 是批次發布的，可能落後好幾天；按「診斷」跑那兩條 aqx_p_488 的測試，` +
+          `比較有排序與沒排序時最新一筆的時間，就能分辨是資料集本身落後還是本頁的請求有問題。`
+        : ""));
+  }
   if (histFetchFailed)
     warns.push("有部分 repo 歷史檔沒抓成功（網路或來源暫時有問題），" +
                "所以微型感測器的跨日資料可能不完整。再按一次「載入測站資料」通常就會補齊。");
