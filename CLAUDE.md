@@ -22,7 +22,7 @@
 | `scripts/hist_extract.py` | 從 history 站萃取指定裝置的歷史觀測值（只用標準函式庫） |
 | `.github/workflows/hist-backfill.yml` | 手動回填／探測，五種模式 |
 | `.github/workflows/hist-daily.yml` | 每日增量（台灣時間 05:00，回看 4 天、抓過的日子照帳本跳過）＋ 存 API 快照 ＋ 自動時區判定 |
-| `.github/workflows/api-append.yml` | **每 30 分鐘**把 API 的滾動視窗併進 CSV。2026-09-01 起這是**唯一**的資料來源（站方停止產出日檔） |
+| `.github/workflows/api-append.yml` | **每 30 分鐘**把 API 的滾動視窗併進 CSV。2026-09-01 起這是**唯一**的資料來源（站方停止產出日檔）。追蹤 `13580653094`、`13554800308`（後者 2026-09-07 加入） |
 | `data/` | 上面兩個 workflow 的產出，網頁以同源方式讀取（`_hist_days.json` 是抓取帳本，網頁不讀） |
 | `worker.js` | Cloudflare Worker CORS proxy，備援用，尚未部署（目前三個來源都不需要） |
 | `README.md` | 部署與使用說明 |
@@ -43,6 +43,11 @@
 <https://history.colife.org.tw> 萃取成 `data/` 裡的小 CSV，網頁同源讀取後與 API 的
 近 4～5 小時合併，另有排程每 30 分鐘把 API 的滾動視窗併進 CSV，補「今天」的缺口。
 `13580653094` 已回填 2026-08-08 起的 PM2.5 與 Relative humidity。
+**`13554800308`（特殊區／敏感族群聚集區）2026-09-07 才加進 `api-append` 的 `DEVICES`**，
+所以它只有那一刻之後的資料，**09-07 以前完全空白**——不是抓取失敗。
+它 08-08～08-31 的歷史檔也還沒回填（要另外手動跑一次 `hist-backfill`，
+每測項每天約 220 MB 且會被限速，24 天兩個測項要分批跑）；
+09-01～09-06 那段**永久取不回來**，來源那時已經停止產出日檔而 API 只留 4～5 小時。
 **來源時間欄位的時區已於 2026-08-23 逐筆驗證完成：台灣時間**（吻合 146 筆 vs 5 筆，
 見 `data/_tzcheck/CONFIRMED`），`manifest.json` 的 `source_tz_verified` 為 true。
 
