@@ -1,5 +1,5 @@
 {
- "generated": "2026-09-11T11:07:25.991498Z",
+ "generated": "2026-09-11T15:09:31.917405Z",
  "source": "history.colife.org.tw（環境部_智慧城鄉空品微型感測器）",
  "note": "time_utc 為 UTC；本檔由 scripts/hist_extract.py 產生",
  "source_tz": "taipei",
@@ -14,8 +14,8 @@
     "Relative humidity"
    ],
    "first": "2026-09-07T08:00:48Z",
-   "last": "2026-09-11T11:03:48Z",
-   "rows": 4747
+   "last": "2026-09-11T15:04:48Z",
+   "rows": 4921
   },
   "13580653094": {
    "months": [
@@ -27,8 +27,8 @@
     "Relative humidity"
    ],
    "first": "2026-08-07T16:00:29Z",
-   "last": "2026-09-11T11:03:38Z",
-   "rows": 44704
+   "last": "2026-09-11T15:05:38Z",
+   "rows": 44875
   }
  }
 }
